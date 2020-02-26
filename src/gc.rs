@@ -6,7 +6,7 @@ use std::ptr;
 
 // ---
 
-trait HeapObject {
+pub trait HeapObject {
     type Ref: ObjectReference;
     type Header: ObjectHeader<Ref=Self::Ref>;
     type Fields: Iterator<Item=*mut Self::Ref>;
@@ -14,12 +14,12 @@ trait HeapObject {
     fn ptr_fields(header: &mut Self::Header) -> Self::Fields;
 }
 
-trait ObjectReference: Copy {
+pub trait ObjectReference: Copy {
     unsafe fn from_ptr(ptr: *mut u8) -> Self;
     fn as_mut_ptr(self) -> Option<*mut u8>;
 }
 
-trait ObjectHeader: Clone + TryFrom<usize> {
+pub trait ObjectHeader: Clone + TryFrom<usize> { // FIXME: TryFrom is too powerful
     type Ref: ObjectReference;
 
     unsafe fn forwarding(ptr: *mut u8) -> Self;
