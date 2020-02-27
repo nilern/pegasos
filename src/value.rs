@@ -9,8 +9,8 @@ use super::gc::{ObjectReference, HeapObject};
 
 // ---
 
-#[derive(Clone, Copy)]
-struct Value(usize);
+#[derive(Debug, Clone, Copy)]
+pub struct Value(usize);
 
 impl ObjectReference for Value {
     type Object = Object;
@@ -26,6 +26,10 @@ impl ObjectReference for Value {
             None
         }
     }
+}
+
+impl PartialEq<Value> for Value {
+    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
 }
 
 impl Value {
@@ -46,6 +50,8 @@ impl Value {
     // 0b0011 is unused
     const EXT_EXT_TAG: usize = 0b1111; // '(), #!eof etc.
 
+    pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Self::BOOL_TAG);
+    pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Self::BOOL_TAG);
     const NIL: Self = Self(0 & Self::EXT_EXT_TAG); // '()
     const UNDEFINED: Self = Self(1 & Self::EXT_EXT_TAG); // for 'unspecified' stuff
     const EOF: Self = Self(2 & Self::EXT_EXT_TAG); // #!eof
@@ -190,7 +196,7 @@ impl Header {
 // ---
 
 #[derive(Clone, Copy)]
-struct Object {
+pub struct Object {
     header: Header
 }
 
@@ -221,7 +227,7 @@ impl HeapObject for Object {
     fn ptr_fields(&mut self) -> Self::Fields { PtrFields::new(self) }
 }
 
-struct PtrFields {
+pub struct PtrFields {
     ptr: *mut Value,
     len: usize
 }
