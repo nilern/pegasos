@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 use std::mem::{self, size_of, align_of};
 
 use super::util::fsize;
-use super::gc::{ObjectReference, ObjectHeader, HeapObject};
+use super::gc::{ObjectReference, HeapObject};
 
 // ---
 
@@ -10,11 +10,15 @@ use super::gc::{ObjectReference, ObjectHeader, HeapObject};
 struct Value(usize);
 
 impl ObjectReference for Value {
-    unsafe fn from_ptr(ptr: *mut u8) -> Self { Self(ptr as usize | Self::OREF_TAG) }
+    type Object = Object;
 
-    fn as_mut_ptr(self) -> Option<*mut u8> {
+    unsafe fn from_ptr(ptr: *mut Self::Object) -> Self {
+        Self((*ptr).data() as usize | Self::OREF_TAG)
+    }
+
+    fn as_mut_ptr(self) -> Option<*mut Object> {
         if self.is_oref() {
-            Some((self.0 & !Self::MASK) as *mut u8)
+            Some(unsafe { ((self.0 & !Self::MASK) as *mut Object).offset(-1) })
         } else {
             None
         }
@@ -87,7 +91,7 @@ impl From<bool> for Value {
 /// Bit 3 is unused
 /// Bits 4-7 are type tag
 /// Other bits are len
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct Header(usize);
 
 impl Header {
@@ -97,62 +101,73 @@ impl Header {
 
     const BYTES_BIT: usize = 0b10;
 
+    fn is_alignment_hole(mem: *const Self) -> bool { unsafe { (*mem).0 == 0 } }
+
     fn data(&self) -> *mut u8 { unsafe { (self as *const Self).add(1) as *mut u8 } }
 
     fn len(&self) -> usize { self.0 >> Self::SIZE_SHIFT }
-
-    fn is_bytes(&self) -> bool { self.0 & Self::BYTES_BIT == Self::BYTES_BIT }
-
-    fn is_forwarding(&self) -> bool { self.0 & Self::FWD_MASK == Self::FWD_TAG }
-}
-
-impl TryFrom<usize> for Header {
-    type Error = ();
-
-    fn try_from(n: usize) -> Result<Self, Self::Error> {
-        if n != 0 {
-            Ok(Self(n))
-        } else {
-            Err(())
-        }
-    }
-}
-
-impl ObjectHeader for Header {
-    type Ref = Value;
-    
-    unsafe fn forwarding(ptr: *mut u8) -> Self { Self(ptr as usize & Self::FWD_TAG) }
-
-    fn forward(&self) -> Option<Self::Ref> {
-        if self.is_forwarding() {
-            Some(unsafe { Self::Ref::from_ptr((self.0 & !Self::FWD_MASK) as *mut u8) })
-        } else {
-            None
-        }
-    }
 
     fn size(&self) -> usize {
         let len = self.len();
         if self.is_bytes() {
             len
         } else {
-            len * size_of::<Self::Ref>()
+            len * size_of::<Value>()
         }
     }
 
-    fn align(&self) -> usize { if self.is_bytes() { align_of::<u8>() } else { align_of::<Value>() } }
+    fn align(&self) -> usize {
+        if self.is_bytes() {
+            align_of::<u8>()
+        } else {
+            align_of::<Value>()
+        }
+    }
+
+    fn is_bytes(&self) -> bool { self.0 & Self::BYTES_BIT == Self::BYTES_BIT }
+
+    fn is_forwarding(&self) -> bool { self.0 & Self::FWD_MASK == Self::FWD_TAG }
+ 
+    unsafe fn forwarding(oref: Value) -> Self {
+        Self((oref.0 & !Value::MASK) | Self::FWD_TAG)
+    }
+
+    fn forward(&self) -> Option<Value> {
+        if self.is_forwarding() {
+            Some(Value((self.0 & !Self::FWD_MASK) | Value::OREF_TAG))
+        } else {
+            None
+        }
+    }
 }
 
 // ---
 
-enum Obj {}
+#[derive(Clone, Copy)]
+struct Object {
+    header: Header
+}
 
-impl HeapObject for Obj {
+impl Object {
+    fn is_bytes(&self) -> bool { self.header.is_bytes() }
+
+    fn len(&self) -> usize { self.header.len() }
+}
+
+impl HeapObject for Object {
     type Ref = Value;
-    type Header = Header;
     type Fields = PtrFields;
 
-    fn ptr_fields(header: &mut Self::Header) -> Self::Fields { PtrFields::new(header as *mut Header) }
+    fn is_alignment_hole(mem: *const Self) -> bool { Header::is_alignment_hole(unsafe{ &(*mem).header }) }
+
+    unsafe fn forwarding(oref: Self::Ref) -> Self { Self {header: Header::forwarding(oref)} }
+    fn forward(&self) -> Option<Self::Ref> { self.header.forward() }
+
+    fn size(&self) -> usize { self.header.size() }
+    fn align(&self) -> usize { self.header.align() }
+
+    fn data(&mut self) -> *mut u8 { (unsafe { (self as *mut Self).offset(1) }) as *mut u8 }
+    fn ptr_fields(&mut self) -> Self::Fields { PtrFields::new(self) }
 }
 
 struct PtrFields {
@@ -161,11 +176,11 @@ struct PtrFields {
 }
 
 impl PtrFields {
-    fn new(header: *mut Header) -> Self {
-        let header = unsafe { &mut *header };
+    fn new(obj: *mut Object) -> Self {
+        let obj = unsafe { &mut *obj };
         Self {
-            ptr: header.data() as *mut Value,
-            len: if header.is_bytes() { 0 } else { header.len() }
+            ptr: obj.data() as *mut Value,
+            len: if obj.is_bytes() { 0 } else { obj.len() }
         }
     }
 }
