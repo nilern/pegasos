@@ -1,5 +1,8 @@
-use std::convert::TryFrom;
+use std::char;
+use std::convert::{TryFrom, TryInto};
 use std::mem::{self, size_of, align_of};
+use std::slice;
+use std::str;
 
 use super::util::fsize;
 use super::gc::{ObjectReference, HeapObject};
@@ -36,6 +39,7 @@ impl Value {
     const EXT_TAG: usize = 0b11; // char, '(), #t, #f etc.
 
     const EXT_SHIFT: usize = 4;
+    const EXT_MASK: usize = (1 << Self::EXT_SHIFT) - 1;
 
     const CHAR_TAG: usize = 0b0111; // 28/60 bit char
     const BOOL_TAG: usize = 0b1011; // bool
@@ -46,7 +50,11 @@ impl Value {
     const UNDEFINED: Self = Self(1 & Self::EXT_EXT_TAG); // for 'unspecified' stuff
     const EOF: Self = Self(2 & Self::EXT_EXT_TAG); // #!eof
 
+    const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 30/62
+
     fn tag(self) -> usize { self.0 & Self::MASK }
+
+    fn ext_tag(self) -> usize { self.0 & Self::EXT_MASK }
 
     fn is_oref(self) -> bool { self.tag() == Self::OREF_TAG }
 }
@@ -55,8 +63,22 @@ impl TryFrom<isize> for Value {
     type Error = (); // FIXME
 
     fn try_from(n: isize) -> Result<Self, Self::Error> {
-        if unimplemented!() { // fits in 30/62 bits
-            Ok(Self((n as usize) << Self::SHIFT | Self::FIX_TAG))
+        if n >> Self::BOUNDS_SHIFT == 0
+           || n >> Self::BOUNDS_SHIFT == !0 as isize // fits in 30/62 bits, OPTIMIZE
+        {
+            Ok(Self((n << Self::SHIFT) as usize | Self::FIX_TAG))
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl TryInto<isize> for Value {
+    type Error = (); // FIXME
+
+    fn try_into(self) -> Result<isize, Self::Error> {
+        if self.tag() == Self::FIX_TAG {
+            Ok(self.0 as isize >> Self::SHIFT)
         } else {
             Err(())
         }
@@ -79,8 +101,32 @@ impl From<char> for Value {
     fn from(c: char) -> Self { Self((c as usize) << Self::EXT_SHIFT | Self::CHAR_TAG) }
 }
 
+impl TryInto<char> for Value {
+    type Error = (); // FIXME
+
+    fn try_into(self) -> Result<char, Self::Error> {
+        if self.ext_tag() == Self::CHAR_TAG {
+            Ok(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) })
+        } else {
+            Err(())
+        }
+    }
+}
+
 impl From<bool> for Value {
     fn from(b: bool) -> Self { Self((b as usize) << Self::EXT_SHIFT | Self::BOOL_TAG) }
+}
+
+impl TryInto<bool> for Value {
+    type Error = (); // FIXME
+
+    fn try_into(self) -> Result<bool, Self::Error> {
+        if self.ext_tag() == Self::BOOL_TAG {
+            Ok(self.0 >> Self::EXT_SHIFT != 0)
+        } else {
+            Err(())
+        }
+    }
 }
 
 // ---
@@ -149,6 +195,11 @@ struct Object {
 }
 
 impl Object {
+    const STRING_TAG: usize = 0x0;
+    const SYMBOL_TAG: usize = 0x1;
+    const PAIR_TAG: usize = 0x2;
+    const VECTOR_TAG: usize = 0x3;
+
     fn is_bytes(&self) -> bool { self.header.is_bytes() }
 
     fn len(&self) -> usize { self.header.len() }
@@ -197,6 +248,74 @@ impl Iterator for PtrFields {
         } else {
             None
         }
+    }
+}
+
+// ---
+
+#[derive(Clone, Copy)]
+struct HeapValue(Value);
+
+impl HeapValue {
+    fn as_ptr(self) -> *mut Object {
+        unsafe { (((self.0).0 & !Value::MASK) as *mut Object).offset(-1) }
+    }
+}
+
+// ---
+
+#[derive(Clone, Copy)]
+struct PgsString(HeapValue);
+
+impl PgsString {
+    fn as_str(&self) -> &str {
+        unsafe {
+            let obj = &mut *self.0.as_ptr();
+            let bytes = slice::from_raw_parts(obj.data(), obj.len());
+            str::from_utf8_unchecked(bytes)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_char() {
+        let c = 'a';
+
+        let v = Value::from(c);
+
+        assert!(!v.is_oref());
+        assert_eq!(c, v.try_into().unwrap());
+    }
+
+    #[test]
+    fn test_bool() {
+        let b = true;
+
+        let v = Value::from(b);
+
+        assert!(!v.is_oref());
+        assert_eq!(b, v.try_into().unwrap());
+    }
+
+    #[test]
+    fn test_fixnum() {
+        let n = 23;
+
+        let v = Value::try_from(n).unwrap();
+
+        assert!(!v.is_oref());
+        assert_eq!(n, v.try_into().unwrap());
+
+        let m = -n;
+
+        let u = Value::try_from(m).unwrap();
+
+        assert!(!u.is_oref());
+        assert_eq!(m, u.try_into().unwrap());
     }
 }
 

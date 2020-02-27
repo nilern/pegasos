@@ -88,6 +88,7 @@ impl<O: HeapObject> MemoryManager<O> {
         }
     }
 
+    // TODO: Heap expansion logic
     unsafe fn collect_garbage(&mut self, roots: &[*mut O::Ref]) {
         // Swap semispaces:
         swap(&mut self.fromspace, &mut self.tospace);
