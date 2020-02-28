@@ -7,7 +7,7 @@ use super::value::Value;
 // ---
 
 #[derive(Debug, PartialEq)]
-enum Token {
+pub enum Token {
     LParen, RParen,
     Identifier(String),
     Const(Value)
@@ -25,12 +25,12 @@ enum Radix {
 
 // ---
 
-struct Lexer<'a> {
+pub struct Lexer<'a> {
     chars: Peekable<Chars<'a>>
 }
 
 impl<'a> Lexer<'a> {
-    fn new(chars: &'a str) -> Self { Self {chars: chars.chars().peekable()} }
+    pub fn new(chars: &'a str) -> Self { Self {chars: chars.chars().peekable()} }
 
     fn boolean(&mut self) -> Option<Token> {
         match self.chars.next() {

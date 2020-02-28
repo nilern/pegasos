@@ -283,6 +283,8 @@ impl PgsString {
     }
 }
 
+// ---
+
 #[cfg(test)]
 mod tests {
     use super::*;
