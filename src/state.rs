@@ -1,7 +1,7 @@
-use std::mem::size_of;
+use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
-use super::value::{Value, Object};
+use super::value::{Value, HeapValue, Object};
 
 pub struct State {
     heap: MemoryManager<Object>,
@@ -30,6 +30,10 @@ impl State {
     pub fn pop(&mut self) -> Option<Value> {
         // FIXME: handle stack underflow
         self.stack.pop()
+    }
+
+    pub fn alloc(&mut self, base: Object) -> Option<HeapValue> {
+        self.heap.alloc(base).map(|v| unsafe { transmute(v) })
     }
 }
 

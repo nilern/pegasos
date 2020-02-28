@@ -1,12 +1,15 @@
 use std::char;
+use std::collections::hash_map::DefaultHasher;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::mem::{self, size_of, align_of, transmute};
 use std::slice;
 use std::str;
 
 use super::util::fsize;
 use super::gc::{ObjectReference, HeapObject};
+use super::state::State; // TODO: Break import cycle
 
 // ---
 
@@ -204,9 +207,19 @@ struct Header(usize);
 impl Header {
     const FWD_MASK: usize = 0b11;
     const FWD_TAG: usize = 0b11;
+    const TYPE_SHIFT: usize = 4;
+    const TYPE_MASK: usize = 0b1111;
     const SIZE_SHIFT: usize = 8;
 
     const BYTES_BIT: usize = 0b10;
+
+    fn new(type_tag: HeapTag, len: usize) -> Self {
+        // FIXME: Check that `len` fits in 24 / 56 bits
+        Self(len << Self::SIZE_SHIFT
+            | type_tag as usize
+            | (type_tag.is_bytes() as usize) << 2
+            | 0b01)
+    }
 
     fn is_alignment_hole(mem: *const Self) -> bool { unsafe { (*mem).0 == 0 } }
 
@@ -223,9 +236,13 @@ impl Header {
         }
     }
 
+    fn tag(&self) -> HeapTag {
+        unsafe { transmute((self.0 >> Self::TYPE_SHIFT & Self::TYPE_MASK) as u8) }
+    }
+
     fn align(&self) -> usize {
         if self.is_bytes() {
-            align_of::<u8>()
+            self.tag().align()
         } else {
             align_of::<Value>()
         }
@@ -255,12 +272,33 @@ pub struct Object {
     header: Header
 }
 
-impl Object {
-    const STRING_TAG: usize = 0x0;
-    const SYMBOL_TAG: usize = 0x1;
-    const PAIR_TAG: usize = 0x2;
-    const VECTOR_TAG: usize = 0x3;
+#[derive(Clone, Copy, PartialEq, Hash)]
+enum HeapTag {
+    String = 0x0,
+    Symbol = 0x1,
+    Pair = 0x2,
+    Vector = 0x3
+}
 
+impl HeapTag {
+    const FIRST_REFS: usize = Self::Pair as usize;
+
+    fn is_bytes(self) -> bool { (self as usize) < Self::FIRST_REFS }
+
+    fn align(self) -> usize {
+        if self.is_bytes() {
+            if self == Self::Symbol {
+                align_of::<SymbolData>()
+            } else {
+                align_of::<u8>()
+            }
+        } else {
+            align_of::<Value>()
+        }
+    }
+}
+
+impl Object {
     fn is_bytes(&self) -> bool { self.header.is_bytes() }
 
     fn len(&self) -> usize { self.header.len() }
@@ -315,12 +353,14 @@ impl Iterator for PtrFields {
 // ---
 
 #[derive(Clone, Copy)]
-struct HeapValue(Value);
+pub struct HeapValue(Value);
 
 impl HeapValue {
     fn as_ptr(self) -> *mut Object {
-        unsafe { (((self.0).0 & !Value::MASK) as *mut Object).offset(-1) }
+        unsafe { (self.data() as *mut Object).offset(-1) }
     }
+
+    fn data(self) -> *mut u8 { ((self.0).0 & !Value::MASK) as *mut u8 }
 }
 
 // ---
@@ -335,6 +375,37 @@ impl PgsString {
             let bytes = slice::from_raw_parts(obj.data(), obj.len());
             str::from_utf8_unchecked(bytes)
         }
+    }
+}
+
+// ---
+
+#[derive(Clone, Copy)]
+struct Symbol(HeapValue);
+
+struct SymbolData {
+    hash: u64
+}
+
+impl Symbol {
+    fn new(state: &mut State, name: &str) -> Option<Self> {
+        // FIXME: Intern / hash cons
+        let len = size_of::<SymbolData>() + name.len();
+        let base = Object {header: Header::new(HeapTag::Symbol, len)};
+        state.alloc(base).map(|res| {
+            let data = res.data() as *mut SymbolData;
+            let mut hasher = DefaultHasher::new();
+            HeapTag::Symbol.hash(&mut hasher);
+            name.hash(&mut hasher);
+            let hash = hasher.finish();
+            unsafe { (*data).hash = hash; }
+
+            let data = unsafe { data.add(1) } as *mut u8;
+            let data = unsafe { slice::from_raw_parts_mut(data, len) };
+            data.copy_from_slice(name.as_bytes());
+
+            Symbol(res)
+        })
     }
 }
 

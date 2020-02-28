@@ -68,7 +68,7 @@ impl<O: HeapObject> MemoryManager<O> {
         Self {max_heap, fromspace, tospace, free, grey: ptr::null_mut()}
     }
 
-    fn alloc(&mut self, base: O) -> Option<O::Ref> {
+    pub fn alloc(&mut self, base: O) -> Option<O::Ref> {
         let align = base.align().max(align_of::<O>()); // sic
 
         let mut free = self.free as usize;
