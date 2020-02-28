@@ -1,6 +1,7 @@
 use std::char;
 use std::convert::{TryFrom, TryInto};
-use std::mem::{self, size_of, align_of};
+use std::fmt::{self, Display, Formatter};
+use std::mem::{self, size_of, align_of, transmute};
 use std::slice;
 use std::str;
 
@@ -16,7 +17,7 @@ impl ObjectReference for Value {
     type Object = Object;
 
     unsafe fn from_ptr(ptr: *mut Self::Object) -> Self {
-        Self((*ptr).data() as usize | Self::OREF_TAG)
+        Self((*ptr).data() as usize | BaseTag::ORef as usize)
     }
 
     fn as_mut_ptr(self) -> Option<*mut Object> {
@@ -32,37 +33,75 @@ impl PartialEq<Value> for Value {
     fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
 }
 
+#[derive(PartialEq)]
+enum BaseTag {
+    ORef = 0b01,
+    Fixnum = 0b00, // i30 | i62
+    Flonum = 0b10, // f30 | f62
+    Ext = 0b11     // char, bool, '() etc.
+}
+
+#[derive(PartialEq)]
+enum Tag {
+    ORef = 0b01,
+    Fixnum = 0b00,
+    Flonum = 0b10,
+    Char = 0b0111, // (28 | 60) bit char
+    Bool = 0b1011,
+    // 0b0011 is unused
+    Singleton = 0b1111 // '() etc.
+}
+
+enum UnpackedValue {
+    ORef(HeapValue),
+    Fixnum(isize),
+    Flonum(fsize),
+    Char(char),
+    Bool(bool),
+    Nil,
+    Undefined,
+    Eof
+}
+
 impl Value {
     const SHIFT: usize = 2;
     const TAG_COUNT: usize = 1 << Self::SHIFT;
     const MASK: usize = Self::TAG_COUNT - 1;
 
-    const OREF_TAG: usize = 0b01;
-    const FIX_TAG: usize = 0b00; // i30 | i62
-    const FLO_TAG: usize = 0b10; // f30 | f62
-    const EXT_TAG: usize = 0b11; // char, '(), #t, #f etc.
-
     const EXT_SHIFT: usize = 4;
     const EXT_MASK: usize = (1 << Self::EXT_SHIFT) - 1;
 
-    const CHAR_TAG: usize = 0b0111; // 28/60 bit char
-    const BOOL_TAG: usize = 0b1011; // bool
-    // 0b0011 is unused
-    const EXT_EXT_TAG: usize = 0b1111; // '(), #!eof etc.
-
-    pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Self::BOOL_TAG);
-    pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Self::BOOL_TAG);
-    const NIL: Self = Self(0 & Self::EXT_EXT_TAG); // '()
-    const UNDEFINED: Self = Self(1 & Self::EXT_EXT_TAG); // for 'unspecified' stuff
-    const EOF: Self = Self(2 & Self::EXT_EXT_TAG); // #!eof
+    pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Tag::Bool as usize);
+    pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Tag::Bool as usize);
+    const NIL: Self = Self(0 & Tag::Singleton as usize); // '()
+    const UNDEFINED: Self = Self(1 & Tag::Singleton as usize); // for 'unspecified' stuff
+    const EOF: Self = Self(2 & Tag::Singleton as usize); // #!eof
 
     const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 30/62
 
-    fn tag(self) -> usize { self.0 & Self::MASK }
+    fn base_tag(self) -> BaseTag { unsafe { transmute((self.0 & Self::MASK) as u8) } }
 
-    fn ext_tag(self) -> usize { self.0 & Self::EXT_MASK }
+    fn tag(self) -> Tag {
+        let base_tag = self.base_tag();
+        if BaseTag::Ext == base_tag {
+            unsafe { transmute((self.0 & Self::EXT_MASK) as u8) }
+        } else {
+            unsafe { transmute(base_tag) }
+        }
+    }
 
-    fn is_oref(self) -> bool { self.tag() == Self::OREF_TAG }
+    fn is_oref(self) -> bool { self.base_tag() == BaseTag::ORef }
+
+    fn unpack(self) -> UnpackedValue {
+        match self.tag() {
+            Tag::ORef => UnpackedValue::ORef(HeapValue(self)),
+            Tag::Fixnum => UnpackedValue::Fixnum((self.0 >> Self::SHIFT) as isize),
+            Tag::Flonum => unimplemented!(),
+            Tag::Char => UnpackedValue::Char(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) }),
+            Tag::Bool => UnpackedValue::Bool((self.0 >> Self::EXT_SHIFT) != 0),
+            Tag::Singleton => unimplemented!()
+        }
+    }
 }
 
 impl TryFrom<isize> for Value {
@@ -72,7 +111,7 @@ impl TryFrom<isize> for Value {
         if n >> Self::BOUNDS_SHIFT == 0
            || n >> Self::BOUNDS_SHIFT == !0 as isize // fits in 30/62 bits, OPTIMIZE
         {
-            Ok(Self((n << Self::SHIFT) as usize | Self::FIX_TAG))
+            Ok(Self((n << Self::SHIFT) as usize | BaseTag::Fixnum as usize))
         } else {
             Err(())
         }
@@ -83,7 +122,7 @@ impl TryInto<isize> for Value {
     type Error = (); // FIXME
 
     fn try_into(self) -> Result<isize, Self::Error> {
-        if self.tag() == Self::FIX_TAG {
+        if self.base_tag() == BaseTag::Fixnum {
             Ok(self.0 as isize >> Self::SHIFT)
         } else {
             Err(())
@@ -96,7 +135,7 @@ impl TryFrom<fsize> for Value {
 
     fn try_from(n: fsize) -> Result<Self, Self::Error> {
         if unimplemented!() { // fits in 30/62 bits
-            Ok(Self(unsafe { mem::transmute::<_, usize>(n) } << Self::SHIFT | Self::FLO_TAG))
+            Ok(Self(unsafe { mem::transmute::<_, usize>(n) } << Self::SHIFT | BaseTag::Flonum as usize))
         } else {
             Err(())
         }
@@ -104,14 +143,14 @@ impl TryFrom<fsize> for Value {
 }
 
 impl From<char> for Value {
-    fn from(c: char) -> Self { Self((c as usize) << Self::EXT_SHIFT | Self::CHAR_TAG) }
+    fn from(c: char) -> Self { Self((c as usize) << Self::EXT_SHIFT | Tag::Char as usize) }
 }
 
 impl TryInto<char> for Value {
     type Error = (); // FIXME
 
     fn try_into(self) -> Result<char, Self::Error> {
-        if self.ext_tag() == Self::CHAR_TAG {
+        if self.0 & Self::EXT_MASK == Tag::Char as usize {
             Ok(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) })
         } else {
             Err(())
@@ -120,17 +159,33 @@ impl TryInto<char> for Value {
 }
 
 impl From<bool> for Value {
-    fn from(b: bool) -> Self { Self((b as usize) << Self::EXT_SHIFT | Self::BOOL_TAG) }
+    fn from(b: bool) -> Self { Self((b as usize) << Self::EXT_SHIFT | Tag::Bool as usize) }
 }
 
 impl TryInto<bool> for Value {
     type Error = (); // FIXME
 
     fn try_into(self) -> Result<bool, Self::Error> {
-        if self.ext_tag() == Self::BOOL_TAG {
+        if self.0 & Self::EXT_MASK == Tag::Bool as usize {
             Ok(self.0 >> Self::EXT_SHIFT != 0)
         } else {
             Err(())
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use UnpackedValue::*;
+
+        match self.unpack() {
+            ORef(v) => unimplemented!(),
+            Fixnum(n) => n.fmt(f), // HACK
+            Flonum(n) => unimplemented!(),
+            Char(c) => c.fmt(f), // HACK
+            Bool(true) => "#true".fmt(f),
+            Bool(false) => "#false".fmt(f),
+            _ => unimplemented!()
         }
     }
 }
@@ -186,7 +241,7 @@ impl Header {
 
     fn forward(&self) -> Option<Value> {
         if self.is_forwarding() {
-            Some(Value((self.0 & !Self::FWD_MASK) | Value::OREF_TAG))
+            Some(Value((self.0 & !Self::FWD_MASK) | BaseTag::ORef as usize))
         } else {
             None
         }

@@ -3,7 +3,7 @@ use std::iter::Peekable;
 use super::lexer::{Token, Lexer};
 use super::value::Value;
 
-fn parse_expr(lexer: &mut Peekable<Lexer>) -> Option<Value> {
+pub fn parse_expr(lexer: &mut Peekable<Lexer>) -> Option<Value> {
     use Token::*;
 
     match lexer.peek() {
