@@ -51,7 +51,7 @@ impl<O: HeapObject> Semispace<O> {
 
 // ---
 
-struct MemoryManager<O: HeapObject> {
+pub struct MemoryManager<O: HeapObject> {
     max_heap: usize,
     fromspace: Semispace<O>,
     tospace: Semispace<O>,
@@ -60,7 +60,7 @@ struct MemoryManager<O: HeapObject> {
 }
 
 impl<O: HeapObject> MemoryManager<O> {
-    fn new(initial_heap: usize, max_heap: usize) -> Self {
+    pub fn new(initial_heap: usize, max_heap: usize) -> Self {
         debug_assert!(initial_heap <= max_heap);
         let fromspace = Semispace::new(initial_heap / 2);
         let tospace = Semispace::new(initial_heap / 2);
@@ -89,14 +89,14 @@ impl<O: HeapObject> MemoryManager<O> {
     }
 
     // TODO: Heap expansion logic
-    unsafe fn collect_garbage(&mut self, roots: &[*mut O::Ref]) {
+    unsafe fn collect_garbage(&mut self, roots: &mut[O::Ref]) {
         // Swap semispaces:
         swap(&mut self.fromspace, &mut self.tospace);
         self.free = self.tospace.start;
         self.grey = self.tospace.start;
 
         // Trace roots:
-        for &root in roots {
+        for root in roots.iter_mut() {
             *root = self.mark(*root);
         }
 
@@ -233,7 +233,7 @@ mod tests {
         }
 
         let mut roots = [heap.alloc(obj).unwrap(), heap.alloc(obj).unwrap()];
-        unsafe { heap.collect_garbage(&[&mut roots[0], &mut roots[1]]) };
+        unsafe { heap.collect_garbage(&mut roots) };
     }
 }
 

@@ -1,21 +1,31 @@
 use std::iter::Peekable;
 
 use super::lexer::{Token, Lexer};
+use super::state::State;
 use super::value::Value;
 
-pub fn parse_expr(lexer: &mut Peekable<Lexer>) -> Option<Value> {
-    use Token::*;
+pub struct Parser<'a> {
+    lexer: Peekable<Lexer<'a>>
+}
 
-    match lexer.peek() {
-        Some(Const(_)) => {
-            if let Some(Const(v)) = lexer.next() {
-                Some(v)
-            } else {
-                unreachable!()
-            }
-        },
-        Some(_) => unimplemented!(),
-        None => None
+impl<'a> Parser<'a> {
+    pub fn new(lexer: Peekable<Lexer<'a>>) -> Self { Self {lexer} }
+
+    pub fn sexpr(&mut self, state: &mut State) -> Result<(), ()> {
+        use Token::*;
+
+        match self.lexer.peek() {
+            Some(Const(_)) => {
+                if let Some(Const(v)) = self.lexer.next() {
+                    state.push(v);
+                    Ok(())
+                } else {
+                    unreachable!()
+                }
+            },
+            Some(_) => unimplemented!(),
+            None => Err(())
+        }
     }
 }
 
@@ -27,8 +37,10 @@ mod tests {
 
     #[test]
     fn test_const() {
-        let mut lexer = Lexer::new(" 23 ").peekable();
-        assert_eq!(parse_expr(&mut lexer), Some(Value::try_from(23).unwrap()));
+        let mut state = State::new(1 << 16, 1 << 20);
+        let mut parser = Parser::new(Lexer::new(" 23 ").peekable());
+        parser.sexpr(&mut state);
+        assert_eq!(state.pop(), Some(Value::try_from(23).unwrap()));
     }
 }
 
