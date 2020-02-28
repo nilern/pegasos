@@ -7,9 +7,9 @@ use super::value::Value;
 // ---
 
 #[derive(Debug, PartialEq)]
-pub enum Token {
+pub enum Token<'a> {
     LParen, RParen,
-    Identifier(String),
+    Identifier(&'a str),
     Const(Value)
 }
 
@@ -26,13 +26,15 @@ enum Radix {
 // ---
 
 pub struct Lexer<'a> {
-    chars: Peekable<Chars<'a>>
+    chars: Chars<'a>
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(chars: &'a str) -> Self { Self {chars: chars.chars().peekable()} }
+    pub fn new(chars: &'a str) -> Self { Self {chars: chars.chars()} }
 
-    fn boolean(&mut self) -> Option<Token> {
+    fn peek(&self) -> Option<char> { self.chars.as_str().chars().next() }
+
+    fn boolean(&mut self) -> Option<Token<'a>> {
         match self.chars.next() {
             Some('t') => return Some(Token::Const(Value::TRUE)),
             Some('f') => return Some(Token::Const(Value::FALSE)),
@@ -40,11 +42,11 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn number(&mut self, radix: Radix) -> Option<Token> {
+    fn number(&mut self, radix: Radix) -> Option<Token<'a>> {
         let mut res: Option<isize> = None;
 
         loop {
-            match self.chars.peek().map(|&c| c) {
+            match self.peek() {
                 Some(c) if c.is_digit(radix as u32) => {
                     let _ = self.chars.next();
                     let m = c.to_digit(radix as u32).unwrap() as isize;
@@ -60,29 +62,30 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn identifier(&mut self) -> Option<Token> {
-        let mut cs = String::new(); // OPTIMIZE: zero-copy
+    fn identifier(&mut self) -> Option<Token<'a>> {
+        let cs = self.chars.as_str();
+        let mut len = 0;
 
         loop {
-            match self.chars.peek() {
-                Some(&c) if c.is_alphabetic() => {
+            match self.peek() {
+                Some(c) if c.is_alphabetic() => {
                     let _ = self.chars.next();
-                    cs.push(c);
+                    len += 1;
                 },
-                _ => return Some(Token::Identifier(cs))
+                _ => return Some(Token::Identifier(&cs[0..len]))
             }
         }
     }
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Token;
+    type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         use Token::*;
 
         loop {
-            match self.chars.peek() {
+            match self.peek() {
                 Some(c) if c.is_whitespace() => {
                     let _ = self.chars.next();
                 },
@@ -96,7 +99,7 @@ impl<'a> Iterator for Lexer<'a> {
                 },
                 Some('#') => {
                     let _ = self.chars.next();
-                    match self.chars.peek() {
+                    match self.peek() {
                         Some('t') => return self.boolean(),
                         Some('f') => return self.boolean(),
                         _ => unimplemented!()
@@ -121,7 +124,7 @@ mod tests {
 
         let input = "  (23 #f foo)  ";
         let chars: Vec<Token> = Lexer::new(&input).collect();
-        assert_eq!(chars, vec![LParen, Const(Value::try_from(23).unwrap()), Const(Value::FALSE), Identifier("foo".to_string()), RParen]);
+        assert_eq!(chars, vec![LParen, Const(Value::try_from(23).unwrap()), Const(Value::FALSE), Identifier("foo"), RParen]);
     }
 }
 
