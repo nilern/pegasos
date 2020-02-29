@@ -9,6 +9,7 @@ use super::value::Value;
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
     LParen, RParen,
+    Dot,
     Identifier(&'a str),
     Const(Value)
 }
@@ -96,6 +97,10 @@ impl<'a> Iterator for Lexer<'a> {
                 Some(')') => {
                     let _ = self.chars.next();
                     return Some(RParen);
+                },
+                Some('.') => {
+                    let _ = self.chars.next();
+                    return Some(Dot);
                 },
                 Some('#') => {
                     let _ = self.chars.next();

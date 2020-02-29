@@ -1,7 +1,7 @@
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
-use super::value::{Value, HeapValue, Object};
+use super::value::{Value, HeapValue, Object, Pair};
 
 pub struct State {
     heap: MemoryManager<Object>,
@@ -34,6 +34,18 @@ impl State {
 
     pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
         self.heap.alloc(base).map(|v| unsafe { transmute(v) })
+    }
+
+    pub unsafe fn cons(&mut self) {
+        debug_assert!(self.stack.len() >= 2);
+
+        let mut pair = Pair::new(self).unwrap_or_else(|| {
+            self.collect_garbage();
+            Pair::new(self).unwrap()
+        });
+        pair.cdr = self.stack.pop().unwrap();
+        pair.car = self.stack.pop().unwrap();
+        self.stack.push(pair.into());
     }
 
     pub unsafe fn collect_garbage(&mut self) {

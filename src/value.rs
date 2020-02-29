@@ -15,7 +15,7 @@ use super::state::State; // TODO: Break import cycle
 
 // ---
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Value(usize);
 
 impl ObjectReference for Value {
@@ -32,10 +32,6 @@ impl ObjectReference for Value {
             None
         }
     }
-}
-
-impl PartialEq<Value> for Value {
-    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
 }
 
 #[derive(PartialEq)]
@@ -78,9 +74,9 @@ impl Value {
 
     pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Tag::Bool as usize);
     pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Tag::Bool as usize);
-    const NIL: Self = Self(0 & Tag::Singleton as usize); // '()
-    const UNDEFINED: Self = Self(1 & Tag::Singleton as usize); // for 'unspecified' stuff
-    const EOF: Self = Self(2 & Tag::Singleton as usize); // #!eof
+    pub const NIL: Self = Self(0 << Self::EXT_SHIFT | Tag::Singleton as usize); // '()
+    pub const UNDEFINED: Self = Self(1 << Self::EXT_SHIFT | Tag::Singleton as usize); // for 'unspecified' stuff
+    pub const EOF: Self = Self(2 << Self::EXT_SHIFT | Tag::Singleton as usize); // #!eof
 
     const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 30/62
 
@@ -104,7 +100,10 @@ impl Value {
             Tag::Flonum => unimplemented!(),
             Tag::Char => UnpackedValue::Char(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) }),
             Tag::Bool => UnpackedValue::Bool((self.0 >> Self::EXT_SHIFT) != 0),
-            Tag::Singleton => unimplemented!()
+            Tag::Singleton => match self {
+                Self::NIL => UnpackedValue::Nil,
+                _ => unimplemented!()
+            }
         }
     }
 }
@@ -190,6 +189,7 @@ impl Display for Value {
             Char(c) => c.fmt(f), // HACK
             Bool(true) => "#true".fmt(f),
             Bool(false) => "#false".fmt(f),
+            Nil => "()".fmt(f),
             _ => unimplemented!()
         }
     }
@@ -363,7 +363,8 @@ pub struct HeapValue<T> {
 
 enum UnpackedHeapValue {
     String(PgsString),
-    Symbol(Symbol)
+    Symbol(Symbol),
+    Pair(Pair)
 }
 
 impl<T> Clone for HeapValue<T> {
@@ -387,6 +388,7 @@ impl HeapValue<()> {
         match self.heap_tag() {
             HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
+            HeapTag::Pair => UnpackedHeapValue::Pair(Pair(HeapValue {value: self.value, _phantom: PhantomData})),
             _ => unimplemented!()
         }
     }
@@ -420,11 +422,29 @@ impl TryFrom<Value> for HeapValue<()> {
 
 impl Display for HeapValue<()> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use UnpackedHeapValue::*;
-
         match self.unpack() {
-            String(s) => s.fmt(f),
-            Symbol(s) => s.fmt(f)
+            UnpackedHeapValue::String(s) => s.fmt(f),
+            UnpackedHeapValue::Symbol(s) => s.fmt(f),
+            UnpackedHeapValue::Pair(mut p) => {
+                "(".fmt(f)?;
+
+                loop {
+                    p.car.fmt(f)?;
+
+                    if let Ok(cdr) = Pair::try_from(p.cdr) {
+                        " ".fmt(f)?;
+                        p = cdr;
+                    } else {
+                        break;
+                    }
+                }
+
+                if p.cdr != Value::NIL {
+                    write!(f, " . {}", p.cdr)?;
+                }
+
+                ")".fmt(f)
+            }
         }
     }
 }
@@ -529,6 +549,59 @@ impl Display for Symbol {
 
 // ---
 
+#[derive(Clone, Copy)]
+pub struct Pair(HeapValue<PairData>);
+
+#[repr(C)]
+pub struct PairData {
+    pub car: Value,
+    pub cdr: Value
+}
+
+impl Pair {
+    pub fn new(state: &mut State) -> Option<Self> {
+        let base = Object {header: Header::new(HeapTag::Pair, size_of::<PairData>() / size_of::<Value>())};
+        state.alloc(base).map(Self)
+    }
+
+    pub fn cons(state: &mut State, car: Value, cdr: Value) -> Option<Self> {
+        Self::new(state).map(|mut res| {
+            *res = PairData {car, cdr};
+            res
+        })
+    }
+}
+
+impl Deref for Pair {
+    type Target = PairData;
+
+    fn deref(&self) -> &Self::Target { &*self.0 }
+}
+
+impl DerefMut for Pair {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
+}
+
+impl From<Pair> for Value {
+    fn from(pair: Pair) -> Self { Value::from(pair.0) }
+}
+
+impl TryFrom<Value> for Pair {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        HeapValue::try_from(value).and_then(|hv| {
+            if hv.heap_tag() == HeapTag::Pair {
+                Ok(Self(HeapValue {value, _phantom: PhantomData}))
+            } else {
+                Err(())
+            }
+        })
+    }
+}
+
+// ---
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,6 +668,18 @@ mod tests {
        
         assert_eq!(s.hash, hash);
         assert_eq!(s.as_str(), name);
+    }
+
+    #[test]
+    fn test_pair() {
+        let mut state = State::new(1 << 12, 1 << 20);
+        let a = Value::try_from(5).unwrap();
+        let b = Value::try_from(8).unwrap();
+
+        let p = Pair::cons(&mut state, a, b).unwrap();
+
+        assert_eq!(p.car, a);
+        assert_eq!(p.cdr, b);
     }
 }
 
