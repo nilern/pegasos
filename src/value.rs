@@ -3,7 +3,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::mem::{self, size_of, align_of, transmute};
+use std::ops::{Deref, DerefMut};
 use std::slice;
 use std::str;
 
@@ -56,7 +58,7 @@ enum Tag {
 }
 
 enum UnpackedValue {
-    ORef(HeapValue),
+    ORef(HeapValue<()>),
     Fixnum(isize),
     Flonum(fsize),
     Char(char),
@@ -97,7 +99,7 @@ impl Value {
 
     fn unpack(self) -> UnpackedValue {
         match self.tag() {
-            Tag::ORef => UnpackedValue::ORef(HeapValue(self)),
+            Tag::ORef => UnpackedValue::ORef(HeapValue {value: self, _phantom: PhantomData}),
             Tag::Fixnum => UnpackedValue::Fixnum((self.0 >> Self::SHIFT) as isize),
             Tag::Flonum => unimplemented!(),
             Tag::Char => UnpackedValue::Char(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) }),
@@ -352,23 +354,52 @@ impl Iterator for PtrFields {
 
 // ---
 
-#[derive(Clone, Copy)]
-pub struct HeapValue(Value);
+pub struct HeapValue<T> {
+    value: Value,
+    _phantom: PhantomData<*mut T>
+}
 
-impl HeapValue {
+impl<T> Clone for HeapValue<T> {
+    fn clone(&self) -> Self { Self {value: self.value, _phantom: self._phantom} }
+}
+
+impl<T> Copy for HeapValue<T> {}
+
+impl<T> HeapValue<T> {
     fn as_ptr(self) -> *mut Object {
         unsafe { (self.data() as *mut Object).offset(-1) }
     }
 
-    fn data(self) -> *mut u8 { ((self.0).0 & !Value::MASK) as *mut u8 }
+    fn data(self) -> *mut u8 { (self.value.0 & !Value::MASK) as *mut u8 }
+}
+
+impl<T> Deref for HeapValue<T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target { unsafe{ &*(self.data() as *const T) } }
+}
+
+impl<T> DerefMut for HeapValue<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut*(self.data() as *mut T) } }
 }
 
 // ---
 
 #[derive(Clone, Copy)]
-struct PgsString(HeapValue);
+struct PgsString(HeapValue<u8>);
 
 impl PgsString {
+    fn new(state: &mut State, cs: &str) -> Option<Self> {
+        let len = cs.len();
+        let base = Object {header: Header::new(HeapTag::String, len)};
+        state.alloc(base).map(|mut res| {
+            let data = unsafe { slice::from_raw_parts_mut(&mut *res, len) };
+            data.copy_from_slice(cs.as_bytes());
+
+            PgsString(res)
+        })
+    }
+
     fn as_str(&self) -> &str {
         unsafe {
             let obj = &mut *self.0.as_ptr();
@@ -381,7 +412,7 @@ impl PgsString {
 // ---
 
 #[derive(Clone, Copy)]
-struct Symbol(HeapValue);
+struct Symbol(HeapValue<SymbolData>);
 
 struct SymbolData {
     hash: u64
@@ -392,21 +423,38 @@ impl Symbol {
         // FIXME: Intern / hash cons
         let len = size_of::<SymbolData>() + name.len();
         let base = Object {header: Header::new(HeapTag::Symbol, len)};
-        state.alloc(base).map(|res| {
-            let data = res.data() as *mut SymbolData;
-            let mut hasher = DefaultHasher::new();
-            HeapTag::Symbol.hash(&mut hasher);
-            name.hash(&mut hasher);
-            let hash = hasher.finish();
-            unsafe { (*data).hash = hash; }
-
-            let data = unsafe { data.add(1) } as *mut u8;
-            let data = unsafe { slice::from_raw_parts_mut(data, len) };
+        state.alloc::<SymbolData>(base).map(|mut res| {
+            res.hash = {
+                let mut hasher = DefaultHasher::new();
+                HeapTag::Symbol.hash(&mut hasher);
+                name.hash(&mut hasher);
+                hasher.finish()
+            };
+            
+            let data = unsafe {
+                let ptr = ((&mut *res) as *mut SymbolData).add(1) as *mut u8;
+                slice::from_raw_parts_mut(ptr, name.len())
+            };
             data.copy_from_slice(name.as_bytes());
 
             Symbol(res)
         })
     }
+
+    fn as_str(&self) -> &str {
+        unsafe {
+            let obj = &mut *self.0.as_ptr();
+            let bytes = slice::from_raw_parts(obj.data().add(size_of::<SymbolData>()),
+                                              obj.len() - size_of::<SymbolData>());
+            str::from_utf8_unchecked(bytes)
+        }
+    }
+}
+
+impl Deref for Symbol {
+    type Target = SymbolData;
+
+    fn deref(&self) -> &Self::Target { &*self.0 }
 }
 
 // ---
@@ -450,6 +498,33 @@ mod tests {
 
         assert!(!u.is_oref());
         assert_eq!(m, u.try_into().unwrap());
+    }
+
+    #[test]
+    fn test_string() {
+        let mut state = State::new(1 << 12, 1 << 20);
+        let cs = "foo";
+
+        let s = PgsString::new(&mut state, cs).unwrap();
+        
+        assert_eq!(s.as_str(), cs);
+    }
+
+    #[test]
+    fn test_symbol() {
+        let mut state = State::new(1 << 12, 1 << 20);
+        let name = "foo";
+        let hash = {
+            let mut hasher = DefaultHasher::new();
+            HeapTag::Symbol.hash(&mut hasher);
+            name.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        let s = Symbol::new(&mut state, name).unwrap();
+       
+        assert_eq!(s.hash, hash);
+        assert_eq!(s.as_str(), name);
     }
 }
 
