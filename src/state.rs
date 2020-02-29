@@ -35,5 +35,9 @@ impl State {
     pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
         self.heap.alloc(base).map(|v| unsafe { transmute(v) })
     }
+
+    pub unsafe fn collect_garbage(&mut self) {
+        self.heap.collect_garbage(&mut self.stack);
+    }
 }
 

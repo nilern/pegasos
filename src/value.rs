@@ -184,7 +184,7 @@ impl Display for Value {
         use UnpackedValue::*;
 
         match self.unpack() {
-            ORef(v) => unimplemented!(),
+            ORef(v) => v.fmt(f),
             Fixnum(n) => n.fmt(f), // HACK
             Flonum(n) => unimplemented!(),
             Char(c) => c.fmt(f), // HACK
@@ -218,7 +218,7 @@ impl Header {
     fn new(type_tag: HeapTag, len: usize) -> Self {
         // FIXME: Check that `len` fits in 24 / 56 bits
         Self(len << Self::SIZE_SHIFT
-            | type_tag as usize
+            | (type_tag as usize) << Self::TYPE_SHIFT
             | (type_tag.is_bytes() as usize) << 2
             | 0b01)
     }
@@ -274,7 +274,7 @@ pub struct Object {
     header: Header
 }
 
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
 enum HeapTag {
     String = 0x0,
     Symbol = 0x1,
@@ -301,6 +301,8 @@ impl HeapTag {
 }
 
 impl Object {
+    fn tag(&self) -> HeapTag { self.header.tag() }
+
     fn is_bytes(&self) -> bool { self.header.is_bytes() }
 
     fn len(&self) -> usize { self.header.len() }
@@ -359,6 +361,11 @@ pub struct HeapValue<T> {
     _phantom: PhantomData<*mut T>
 }
 
+enum UnpackedHeapValue {
+    String(PgsString),
+    Symbol(Symbol)
+}
+
 impl<T> Clone for HeapValue<T> {
     fn clone(&self) -> Self { Self {value: self.value, _phantom: self._phantom} }
 }
@@ -366,11 +373,23 @@ impl<T> Clone for HeapValue<T> {
 impl<T> Copy for HeapValue<T> {}
 
 impl<T> HeapValue<T> {
+    fn heap_tag(self) -> HeapTag { unsafe { (*self.as_ptr()).tag() } }
+
     fn as_ptr(self) -> *mut Object {
         unsafe { (self.data() as *mut Object).offset(-1) }
     }
 
     fn data(self) -> *mut u8 { (self.value.0 & !Value::MASK) as *mut u8 }
+}
+
+impl HeapValue<()> {
+    fn unpack(self) -> UnpackedHeapValue {
+        match self.heap_tag() {
+            HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
+            HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
+            _ => unimplemented!()
+        }
+    }
 }
 
 impl<T> Deref for HeapValue<T> {
@@ -381,6 +400,33 @@ impl<T> Deref for HeapValue<T> {
 
 impl<T> DerefMut for HeapValue<T> {
     fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut*(self.data() as *mut T) } }
+}
+
+impl<T> From<HeapValue<T>> for Value {
+    fn from(v: HeapValue<T>) -> Self { v.value }
+}
+
+impl TryFrom<Value> for HeapValue<()> {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if value.base_tag() == BaseTag::ORef {
+            Ok(Self {value, _phantom: PhantomData})
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl Display for HeapValue<()> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use UnpackedHeapValue::*;
+
+        match self.unpack() {
+            String(s) => s.fmt(f),
+            Symbol(s) => s.fmt(f)
+        }
+    }
 }
 
 // ---
@@ -409,17 +455,21 @@ impl PgsString {
     }
 }
 
+impl Display for PgsString {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "\"{}\"", self.as_str()) }
+}
+
 // ---
 
 #[derive(Clone, Copy)]
-struct Symbol(HeapValue<SymbolData>);
+pub struct Symbol(HeapValue<SymbolData>);
 
-struct SymbolData {
-    hash: u64
+pub struct SymbolData {
+    pub hash: u64
 }
 
 impl Symbol {
-    fn new(state: &mut State, name: &str) -> Option<Self> {
+    pub fn new(state: &mut State, name: &str) -> Option<Self> {
         // FIXME: Intern / hash cons
         let len = size_of::<SymbolData>() + name.len();
         let base = Object {header: Header::new(HeapTag::Symbol, len)};
@@ -441,7 +491,7 @@ impl Symbol {
         })
     }
 
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         unsafe {
             let obj = &mut *self.0.as_ptr();
             let bytes = slice::from_raw_parts(obj.data().add(size_of::<SymbolData>()),
@@ -455,6 +505,26 @@ impl Deref for Symbol {
     type Target = SymbolData;
 
     fn deref(&self) -> &Self::Target { &*self.0 }
+}
+
+impl From<Symbol> for Value {
+    fn from(symbol: Symbol) -> Self { symbol.0.into() }
+}
+
+impl TryFrom<HeapValue<()>> for Symbol {
+    type Error = (); // FIXME
+
+    fn try_from(v: HeapValue<()>) -> Result<Self, Self::Error> {
+        if v.heap_tag() == HeapTag::Symbol {
+            Ok(Self(HeapValue {value: v.value, _phantom: PhantomData}))
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl Display for Symbol {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.as_str().fmt(f) }
 }
 
 // ---
