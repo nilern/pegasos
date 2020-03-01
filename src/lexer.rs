@@ -134,7 +134,7 @@ mod tests {
 
         let input = "  (23 #f foo)  ";
         let chars: Vec<Token> = Lexer::new(&input).collect();
-        assert_eq!(chars, vec![LParen, Const(Value::try_from(23).unwrap()), Const(Value::FALSE), Identifier("foo"), RParen]);
+        assert_eq!(chars, vec![LParen, Const(Value::try_from(23isize).unwrap()), Const(Value::FALSE), Identifier("foo"), RParen]);
     }
 }
 

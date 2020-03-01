@@ -34,6 +34,10 @@ impl State {
 
     pub fn peek(&self) -> Option<&Value> { self.stack.last() }
 
+    pub fn get(&self, i: usize) -> Option<&Value> {
+        self.stack.len().checked_sub(1 + i).and_then(|i| self.stack.get(i))
+    }
+
     pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
         self.heap.alloc(base).map(|v| unsafe { transmute(v) })
     }

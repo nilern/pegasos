@@ -60,12 +60,12 @@ pub enum UnpackedValue {
     Char(char),
     Bool(bool),
     Nil,
-    Undefined,
+    Unspecified,
     Eof
 }
 
 impl Value {
-    const SHIFT: usize = 2;
+    pub const SHIFT: usize = 2;
     const TAG_COUNT: usize = 1 << Self::SHIFT;
     const MASK: usize = Self::TAG_COUNT - 1;
 
@@ -75,7 +75,7 @@ impl Value {
     pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Tag::Bool as usize);
     pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Tag::Bool as usize);
     pub const NIL: Self = Self(0 << Self::EXT_SHIFT | Tag::Singleton as usize); // '()
-    pub const UNDEFINED: Self = Self(1 << Self::EXT_SHIFT | Tag::Singleton as usize); // for 'unspecified' stuff
+    pub const UNSPECIFIED: Self = Self(1 << Self::EXT_SHIFT | Tag::Singleton as usize); // for 'unspecified' stuff
     pub const EOF: Self = Self(2 << Self::EXT_SHIFT | Tag::Singleton as usize); // #!eof
 
     const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 30/62
@@ -102,6 +102,7 @@ impl Value {
             Tag::Bool => UnpackedValue::Bool((self.0 >> Self::EXT_SHIFT) != 0),
             Tag::Singleton => match self {
                 Self::NIL => UnpackedValue::Nil,
+                Self::UNSPECIFIED => UnpackedValue::Unspecified,
                 _ => unimplemented!()
             }
         }
@@ -128,6 +129,30 @@ impl TryInto<isize> for Value {
     fn try_into(self) -> Result<isize, Self::Error> {
         if self.base_tag() == BaseTag::Fixnum {
             Ok(self.0 as isize >> Self::SHIFT)
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl TryFrom<usize> for Value {
+    type Error = (); // FIXME
+
+    fn try_from(n: usize) -> Result<Self, Self::Error> {
+        if n >> Self::BOUNDS_SHIFT == 0 { // fits in 30/62 bits, OPTIMIZE
+            Ok(Self(n << Self::SHIFT | BaseTag::Fixnum as usize))
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl TryInto<usize> for Value {
+    type Error = (); // FIXME
+
+    fn try_into(self) -> Result<usize, Self::Error> {
+        if self.base_tag() == BaseTag::Fixnum {
+            Ok(self.0 >> Self::SHIFT)
         } else {
             Err(())
         }
@@ -190,6 +215,7 @@ impl Display for Value {
             Bool(true) => "#true".fmt(f),
             Bool(false) => "#false".fmt(f),
             Nil => "()".fmt(f),
+            Unspecified => "#<unspecified>".fmt(f),
             _ => unimplemented!()
         }
     }
@@ -654,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_fixnum() {
-        let n = 23;
+        let n = 23isize;
 
         let v = Value::try_from(n).unwrap();
 
@@ -699,8 +725,8 @@ mod tests {
     #[test]
     fn test_pair() {
         let mut state = State::new(1 << 12, 1 << 20);
-        let a = Value::try_from(5).unwrap();
-        let b = Value::try_from(8).unwrap();
+        let a = Value::try_from(5isize).unwrap();
+        let b = Value::try_from(8isize).unwrap();
 
         let p = Pair::cons(&mut state, a, b).unwrap();
 
