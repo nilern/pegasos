@@ -361,7 +361,7 @@ pub struct HeapValue<T> {
     _phantom: PhantomData<*mut T>
 }
 
-enum UnpackedHeapValue {
+pub enum UnpackedHeapValue {
     String(PgsString),
     Symbol(Symbol),
     Pair(Pair)
@@ -384,7 +384,7 @@ impl<T> HeapValue<T> {
 }
 
 impl HeapValue<()> {
-    fn unpack(self) -> UnpackedHeapValue {
+    pub fn unpack(self) -> UnpackedHeapValue {
         match self.heap_tag() {
             HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
@@ -452,10 +452,10 @@ impl Display for HeapValue<()> {
 // ---
 
 #[derive(Clone, Copy)]
-struct PgsString(HeapValue<u8>);
+pub struct PgsString(HeapValue<u8>);
 
 impl PgsString {
-    fn new(state: &mut State, cs: &str) -> Option<Self> {
+    pub fn new(state: &mut State, cs: &str) -> Option<Self> {
         let len = cs.len();
         let base = Object {header: Header::new(HeapTag::String, len)};
         state.alloc(base).map(|mut res| {
@@ -466,7 +466,7 @@ impl PgsString {
         })
     }
 
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         unsafe {
             let obj = &mut *self.0.as_ptr();
             let bytes = slice::from_raw_parts(obj.data(), obj.len());
@@ -477,6 +477,24 @@ impl PgsString {
 
 impl Display for PgsString {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "\"{}\"", self.as_str()) }
+}
+
+impl From<PgsString> for Value {
+    fn from(s: PgsString) -> Self { s.0.into() }
+}
+
+impl TryFrom<Value> for PgsString {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        HeapValue::try_from(value).and_then(|oref| {
+            if oref.heap_tag() == HeapTag::String {
+                Ok(Self(HeapValue {value: oref.value, _phantom: PhantomData}))
+            } else {
+                Err(())
+            }
+        })
+    }
 }
 
 // ---
@@ -540,6 +558,14 @@ impl TryFrom<HeapValue<()>> for Symbol {
         } else {
             Err(())
         }
+    }
+}
+
+impl TryFrom<Value> for Symbol {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        HeapValue::try_from(value).and_then(Self::try_from)
     }
 }
 

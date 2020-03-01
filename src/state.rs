@@ -1,7 +1,7 @@
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
-use super::value::{Value, HeapValue, Object, Pair};
+use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair};
 
 pub struct State {
     heap: MemoryManager<Object>,
@@ -36,6 +36,22 @@ impl State {
 
     pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
         self.heap.alloc(base).map(|v| unsafe { transmute(v) })
+    }
+
+    pub unsafe fn push_string(&mut self, s: &str) {
+        let v = PgsString::new(self, s).unwrap_or_else(|| {
+            self.collect_garbage();
+            PgsString::new(self, s).unwrap()
+        });
+        self.push(v.into())
+    }
+
+    pub unsafe fn push_symbol(&mut self, name: &str) {
+        let v = Symbol::new(self, name).unwrap_or_else(|| {
+            self.collect_garbage();
+            Symbol::new(self, name).unwrap()
+        });
+        self.push(v.into())
     }
 
     pub unsafe fn cons(&mut self) {

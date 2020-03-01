@@ -50,6 +50,17 @@ impl<'a> Parser<'a> {
                     }
                 }
             },
+            Some(Quote) => {
+                let _ = self.lexer.next();
+                unsafe { state.push_symbol("quote") };
+                self.sexpr(state)?;
+                state.push(Value::NIL);
+                unsafe {
+                    state.cons();
+                    state.cons();
+                }
+                return Ok(());
+            },
             Some(Identifier(cs)) => {
                 if let Some(Identifier(cs)) = self.lexer.next() {
                     let s = if let Some(s) = Symbol::new(state, cs) {
