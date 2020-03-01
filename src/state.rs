@@ -32,6 +32,8 @@ impl State {
         self.stack.pop()
     }
 
+    pub fn peek(&self) -> Option<&Value> { self.stack.last() }
+
     pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
         self.heap.alloc(base).map(|v| unsafe { transmute(v) })
     }

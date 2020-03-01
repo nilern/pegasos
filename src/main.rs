@@ -8,10 +8,12 @@ mod value;
 mod lexer;
 mod state;
 mod parser;
+mod interpreter;
 
 use lexer::Lexer;
 use parser::Parser;
 use state::State;
+use interpreter::eval;
 
 const PROMPT: &str = "pegasos> ";
 
@@ -26,7 +28,10 @@ fn main() {
 
                 let mut parser = Parser::new(Lexer::new(&line).peekable());
                 match parser.sexpr(&mut state) {
-                    Ok(()) => println!("Ack, echo: {}", state.pop().unwrap()),
+                    Ok(()) => match eval(&mut state) {
+                        Ok(()) => println!("Ack, result: {}", state.pop().unwrap()),
+                        Err(()) => println!("Runtime error.")
+                    },
                     Err(()) => println!("Parse error.")
                 }
             },

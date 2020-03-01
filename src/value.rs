@@ -53,7 +53,7 @@ enum Tag {
     Singleton = 0b1111 // '() etc.
 }
 
-enum UnpackedValue {
+pub enum UnpackedValue {
     ORef(HeapValue<()>),
     Fixnum(isize),
     Flonum(fsize),
@@ -93,7 +93,7 @@ impl Value {
 
     fn is_oref(self) -> bool { self.base_tag() == BaseTag::ORef }
 
-    fn unpack(self) -> UnpackedValue {
+    pub fn unpack(self) -> UnpackedValue {
         match self.tag() {
             Tag::ORef => UnpackedValue::ORef(HeapValue {value: self, _phantom: PhantomData}),
             Tag::Fixnum => UnpackedValue::Fixnum((self.0 >> Self::SHIFT) as isize),
