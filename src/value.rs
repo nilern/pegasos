@@ -60,6 +60,7 @@ pub enum UnpackedValue {
     Char(char),
     Bool(bool),
     Nil,
+    Unbound,
     Unspecified,
     Eof
 }
@@ -75,8 +76,9 @@ impl Value {
     pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Tag::Bool as usize);
     pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Tag::Bool as usize);
     pub const NIL: Self = Self(0 << Self::EXT_SHIFT | Tag::Singleton as usize); // '()
-    pub const UNSPECIFIED: Self = Self(1 << Self::EXT_SHIFT | Tag::Singleton as usize); // for 'unspecified' stuff
-    pub const EOF: Self = Self(2 << Self::EXT_SHIFT | Tag::Singleton as usize); // #!eof
+    pub const UNBOUND: Self = Self(1 << Self::EXT_SHIFT | Tag::Singleton as usize); // 'tombstone'
+    pub const UNSPECIFIED: Self = Self(2 << Self::EXT_SHIFT | Tag::Singleton as usize); // for 'unspecified' stuff
+    pub const EOF: Self = Self(3 << Self::EXT_SHIFT | Tag::Singleton as usize); // #!eof
 
     const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 30/62
 
@@ -102,6 +104,7 @@ impl Value {
             Tag::Bool => UnpackedValue::Bool((self.0 >> Self::EXT_SHIFT) != 0),
             Tag::Singleton => match self {
                 Self::NIL => UnpackedValue::Nil,
+                Self::UNBOUND => UnpackedValue::Unbound,
                 Self::UNSPECIFIED => UnpackedValue::Unspecified,
                 _ => unimplemented!()
             }
@@ -215,6 +218,7 @@ impl Display for Value {
             Bool(true) => "#true".fmt(f),
             Bool(false) => "#false".fmt(f),
             Nil => "()".fmt(f),
+            Unbound => "#<unbound>".fmt(f), // although we should never actually get here
             Unspecified => "#<unspecified>".fmt(f),
             _ => unimplemented!()
         }
@@ -338,6 +342,8 @@ impl HeapObject for Object {
     type Ref = Value;
     type Fields = PtrFields;
 
+    const LAPSED: Self::Ref = Value::UNBOUND;
+
     fn is_alignment_hole(mem: *const Self) -> bool { Header::is_alignment_hole(unsafe{ &(*mem).header }) }
 
     unsafe fn forwarding(oref: Self::Ref) -> Self { Self {header: Header::forwarding(oref)} }
@@ -417,7 +423,6 @@ impl HeapValue<()> {
             HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Pair => UnpackedHeapValue::Pair(Pair(HeapValue {value: self.value, _phantom: PhantomData})),
-            _ => unimplemented!()
         }
     }
 }
@@ -641,6 +646,7 @@ pub struct SymbolTable {
 
 impl SymbolTable {
     const VACANT: Value = Value::FALSE;
+    const TOMBSTONE: Value = Value::UNBOUND;
 
     pub fn new() -> Self {
         Self {
@@ -682,6 +688,7 @@ impl SymbolTable {
             let i = hash as usize + collisions & capacity - 1; // hash + collisions % capacity
 
             match self.symbols[i] {
+                Self::TOMBSTONE => {},
                 Self::VACANT => return Err(i),
                 symbol => {
                     let symbol = unsafe { transmute::<Value, Symbol>(symbol) };
@@ -694,6 +701,7 @@ impl SymbolTable {
         unreachable!() // If we got here this was called on a full table
     }
 
+    // OPTIMIZE: If there are lots of tombstones, don't need to grow
     fn ensure_vacancy(&mut self) {
         if self.occupancy + 1 > self.symbols.len() >> 1 { // new_load_factor > 0.5
             self.rehash();
@@ -709,6 +717,7 @@ impl SymbolTable {
                 let i = hash as usize + collisions & capacity - 1; // hash + collisions % capacity
 
                 match this.symbols[i] {
+                    SymbolTable::TOMBSTONE => unreachable!(), // in rehashed, nothing is deleted
                     SymbolTable::VACANT => {
                         this.symbols[i] = symbol.into();
                         return;
@@ -724,6 +733,7 @@ impl SymbolTable {
 
         for v in symbols {
             match v {
+                Self::TOMBSTONE => self.occupancy -= 1,
                 Self::VACANT => {},
                 symbol => insert(self, unsafe { transmute::<Value, Symbol>(symbol) })
             }

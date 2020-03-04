@@ -81,6 +81,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                 UnpackedValue::Flonum(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                 UnpackedValue::Char(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                 UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
+                UnpackedValue::Unbound => unreachable!(),
                 UnpackedValue::Unspecified => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                 UnpackedValue::Eof => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                 UnpackedValue::Nil => return Err(()),

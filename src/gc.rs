@@ -11,6 +11,8 @@ pub trait HeapObject: Copy {
     // type Header: ObjectHeader<Ref=Self::Ref>;
     type Fields: Iterator<Item=*mut Self::Ref>;
 
+    const LAPSED: Self::Ref;
+
     fn is_alignment_hole(mem: *const Self) -> bool;
 
     unsafe fn forwarding(oref: Self::Ref) -> Self;
@@ -162,12 +164,24 @@ impl<'a, O: HeapObject> Collection<'a, O> {
         for root in roots {
             *root = self.0.mark(*root);
         }
-
         self
     }
 
-    pub unsafe fn finish(self) {
-        self.0.collect_garbage()
+    pub unsafe fn traverse(self) -> Self {
+        self.0.collect_garbage();
+        self
+    }
+
+    pub unsafe fn weaks<I: Iterator<Item=*mut O::Ref>>(self, weaks: I) {
+        for weak in weaks {
+            match (*weak).as_mut_ptr() {
+                Some(oref) => match (*oref).forward() {
+                    Some(forwarded) => *weak = forwarded,
+                    None => *weak = O::LAPSED
+                },
+                None => {}
+            }
+        }
     }
 }
 
@@ -214,6 +228,8 @@ mod tests {
         type Ref = *mut u8;
         type Fields = iter::Empty<*mut Self::Ref>;
 
+        const LAPSED: Self::Ref = ptr::null_mut();
+
         fn is_alignment_hole(mem: *const Self) -> bool { Hdr::is_alignment_hole(unsafe { &(*mem).header }) }
 
         unsafe fn forwarding(oref: Self::Ref) -> Self { Self {header: Hdr::forwarding(oref)} }
@@ -253,7 +269,7 @@ mod tests {
         unsafe {
             heap.collection()
                 .roots(roots.iter_mut().map(|v| v as *mut *mut u8))
-                .finish();
+                .traverse();
         }
     }
 }

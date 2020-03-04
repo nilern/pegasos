@@ -83,13 +83,12 @@ impl State {
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(vec.into())
     }
-
     // TODO: References from symbol table should be weak
     pub unsafe fn collect_garbage(&mut self) {
         self.heap.collection()
             .roots(self.stack.iter_mut().map(|v| v as *mut Value))
-            .roots(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)))
-            .finish();
+            .traverse()
+            .weaks(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)));
     }
 }
 
