@@ -633,7 +633,6 @@ impl Symbol {
     }
 }
 
-// TODO: Use ephemerons
 pub struct SymbolTable {
     symbols: Vec<Value>,
     occupancy: usize,

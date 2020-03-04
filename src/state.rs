@@ -84,6 +84,7 @@ impl State {
         self.stack.push(vec.into())
     }
 
+    // TODO: References from symbol table should be weak
     pub unsafe fn collect_garbage(&mut self) {
         self.heap.collection()
             .roots(self.stack.iter_mut().map(|v| v as *mut Value))
