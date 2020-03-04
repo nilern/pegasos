@@ -73,6 +73,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                     } else {
                         unimplemented!()
                     },
+                    UnpackedHeapValue::Vector(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                     UnpackedHeapValue::String(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                     _ => unimplemented!()
                 },

@@ -2,7 +2,7 @@ use std::iter::Peekable;
 
 use super::lexer::{Token, Lexer};
 use super::state::State;
-use super::value::{Value, HeapValue, Symbol, Pair};
+use super::value::{Value, HeapValue, Symbol, Pair, Vector};
 
 pub struct Parser<'a> {
     lexer: Peekable<Lexer<'a>>
@@ -46,7 +46,26 @@ impl<'a> Parser<'a> {
                             self.sexpr(state)?;
                             len += 1;
                         },
-                        None => return Err(()),
+                        None => return Err(())
+                    }
+                }
+            },
+            Some(OpenVector) => {
+                let _ = self.lexer.next();
+                let mut len = 0;
+
+                loop {
+                    match self.lexer.peek() {
+                        Some(RParen) => {
+                            let _ = self.lexer.next();
+                            unsafe { state.vector(len); }
+                            return Ok(());
+                        },
+                        Some(_) => {
+                            self.sexpr(state)?;
+                            len += 1;
+                        },
+                        None => return Err(())
                     }
                 }
             },
@@ -150,6 +169,18 @@ mod tests {
 
         assert_eq!(parsed.car, Value::try_from(5isize).unwrap());
         assert_eq!(parsed.cdr, Value::try_from(8isize).unwrap());
+    }
+
+    #[test]
+    fn test_vector() {
+        let mut state = State::new(1 << 16, 1 << 20);
+        let mut parser = Parser::new(Lexer::new(" #(5) ").peekable());
+
+        parser.sexpr(&mut state).unwrap();
+        let parsed: Vector = state.pop().unwrap().try_into().unwrap();
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0], Value::try_from(5isize).unwrap());
     }
 }
 

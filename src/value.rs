@@ -388,6 +388,7 @@ pub struct HeapValue<T> {
 }
 
 pub enum UnpackedHeapValue {
+    Vector(Vector),
     String(PgsString),
     Symbol(Symbol),
     Pair(Pair)
@@ -412,6 +413,7 @@ impl<T> HeapValue<T> {
 impl HeapValue<()> {
     pub fn unpack(self) -> UnpackedHeapValue {
         match self.heap_tag() {
+            HeapTag::Vector => UnpackedHeapValue::Vector(Vector(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Pair => UnpackedHeapValue::Pair(Pair(HeapValue {value: self.value, _phantom: PhantomData})),
@@ -449,6 +451,18 @@ impl TryFrom<Value> for HeapValue<()> {
 impl Display for HeapValue<()> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.unpack() {
+            UnpackedHeapValue::Vector(vec) => {
+                "#(".fmt(f)?;
+
+                for (i, v) in vec.iter().enumerate() {
+                    if i > 0 {
+                        " ".fmt(f)?;
+                    }
+                    v.fmt(f)?;
+                }
+
+                ")".fmt(f)
+            },
             UnpackedHeapValue::String(s) => s.fmt(f),
             UnpackedHeapValue::Symbol(s) => s.fmt(f),
             UnpackedHeapValue::Pair(mut p) => {
@@ -473,6 +487,61 @@ impl Display for HeapValue<()> {
             }
         }
     }
+}
+
+// ---
+
+pub struct Vector(HeapValue<Value>);
+
+impl Vector {
+    pub fn new(state: &mut State, len: usize) -> Option<Self> {
+        let base = Object {header: Header::new(HeapTag::Vector, len)};
+        state.alloc(base).map(Vector)
+    }
+
+    pub fn as_slice(&self) -> &[Value] {
+        unsafe {
+            let obj = &mut *self.0.as_ptr();
+            slice::from_raw_parts(obj.data() as *const Value, obj.len())
+        }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [Value] {
+        unsafe {
+            let obj = &mut *self.0.as_ptr();
+            slice::from_raw_parts_mut(obj.data() as *mut Value, obj.len())
+        }
+    }
+}
+
+impl From<Vector> for Value {
+    fn from(value: Vector) -> Self { value.0.into() }
+}
+
+impl TryFrom<Value> for Vector {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if let Ok(oref) = HeapValue::try_from(value) {
+            if oref.heap_tag() == HeapTag::Vector {
+                Ok(Vector(HeapValue {value, _phantom: PhantomData}))
+            } else {
+                Err(())
+            }
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl Deref for Vector {
+    type Target = [Value];
+
+    fn deref(&self) -> &Self::Target { self.as_slice() }
+}
+
+impl DerefMut for Vector {
+    fn deref_mut(&mut self) -> &mut Self::Target { self.as_mut_slice() }
 }
 
 // ---
@@ -693,6 +762,22 @@ mod tests {
 
         assert!(!u.is_oref());
         assert_eq!(m, u.try_into().unwrap());
+    }
+
+    #[test]
+    fn test_vector() {
+        let mut state = State::new(1 << 12, 1 << 20);
+        let len = 7;
+        let i = 3;
+        
+        let mut vec = Vector::new(&mut state, len).unwrap();
+
+        assert_eq!(vec.len(), len);
+        assert_eq!(vec[i], Value::try_from(0isize).unwrap());
+
+        vec[i] = Value::from('a');
+
+        assert_eq!(vec[i], Value::from('a'));
     }
 
     #[test]

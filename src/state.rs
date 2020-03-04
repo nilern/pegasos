@@ -1,7 +1,7 @@
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
-use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair};
+use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector};
 
 pub struct State {
     heap: MemoryManager<Object>,
@@ -68,6 +68,18 @@ impl State {
         pair.cdr = self.stack.pop().unwrap();
         pair.car = self.stack.pop().unwrap();
         self.stack.push(pair.into());
+    }
+
+    pub unsafe fn vector(&mut self, len: usize) {
+        debug_assert!(self.stack.len() >= len);
+        
+        let mut vec = Vector::new(self, len).unwrap_or_else(|| {
+            self.collect_garbage();
+            Vector::new(self, len).unwrap()
+        });
+        vec.copy_from_slice(&self.stack[self.stack.len() - len..]);
+        self.stack.truncate(self.stack.len() - len);
+        self.stack.push(vec.into())
     }
 
     pub unsafe fn collect_garbage(&mut self) {

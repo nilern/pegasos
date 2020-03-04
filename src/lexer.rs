@@ -8,7 +8,7 @@ use super::value::Value;
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
-    LParen, RParen,
+    LParen, RParen, OpenVector,
     Dot,
     Quote,
     Identifier(&'a str),
@@ -112,6 +112,10 @@ impl<'a> Iterator for Lexer<'a> {
                     match self.peek() {
                         Some('t') => return self.boolean(),
                         Some('f') => return self.boolean(),
+                        Some('(') => {
+                            let _ = self.chars.next();
+                            return Some(OpenVector);
+                        }
                         _ => unimplemented!()
                     }
                 },
