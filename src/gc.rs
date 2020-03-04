@@ -89,17 +89,16 @@ impl<O: HeapObject> MemoryManager<O> {
     }
 
     // TODO: Heap expansion logic
-    pub unsafe fn collect_garbage(&mut self, roots: &mut[O::Ref]) {
+    pub unsafe fn collection<'a>(&'a mut self) -> Collection<'a, O> {
         // Swap semispaces:
         swap(&mut self.fromspace, &mut self.tospace);
         self.free = self.tospace.start;
         self.grey = self.tospace.start;
 
-        // Trace roots:
-        for root in roots.iter_mut() {
-            *root = self.mark(*root);
-        }
+        Collection(self)
+    }
 
+    unsafe fn collect_garbage(&mut self) {
         // Trace the rest:
         while self.grey < self.free {
             self.find_header();
@@ -153,6 +152,24 @@ impl<O: HeapObject> MemoryManager<O> {
 }
 
 // FIXME: impl Drop
+
+// ---
+
+pub struct Collection<'a, O: HeapObject>(&'a mut MemoryManager<O>);
+
+impl<'a, O: HeapObject> Collection<'a, O> {
+    pub unsafe fn roots<I: Iterator<Item=*mut O::Ref>>(self, roots: I) -> Self {
+        for root in roots {
+            *root = self.0.mark(*root);
+        }
+
+        self
+    }
+
+    pub unsafe fn finish(self) {
+        self.0.collect_garbage()
+    }
+}
 
 // ---
 
@@ -233,7 +250,11 @@ mod tests {
         }
 
         let mut roots = [heap.alloc(obj).unwrap(), heap.alloc(obj).unwrap()];
-        unsafe { heap.collect_garbage(&mut roots) };
+        unsafe {
+            heap.collection()
+                .roots(roots.iter_mut().map(|v| v as *mut *mut u8))
+                .finish();
+        }
     }
 }
 

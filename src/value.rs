@@ -1,8 +1,8 @@
 use std::char;
-use std::collections::hash_map::DefaultHasher;
+use std::collections::hash_map::{DefaultHasher, RandomState};
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash, Hasher, BuildHasher};
 use std::marker::PhantomData;
 use std::mem::{self, size_of, align_of, transmute};
 use std::ops::{Deref, DerefMut};
@@ -10,7 +10,7 @@ use std::slice;
 use std::str;
 
 use super::util::fsize;
-use super::gc::{ObjectReference, HeapObject};
+use super::gc::{ObjectReference, HeapObject, MemoryManager};
 use super::state::State; // TODO: Break import cycle
 
 // ---
@@ -602,18 +602,17 @@ pub struct SymbolData {
 }
 
 impl Symbol {
-    pub fn new(state: &mut State, name: &str) -> Option<Self> {
-        // FIXME: Intern / hash cons
+    pub fn new(heap: &mut MemoryManager<Object>, symbols: &mut SymbolTable, name: &str) -> Option<Self> {
+        symbols.get(heap, name)
+    }
+
+    fn create(heap: &mut MemoryManager<Object>, hash: u64, name: &str) -> Option<Self> {
         let len = size_of::<SymbolData>() + name.len();
         let base = Object {header: Header::new(HeapTag::Symbol, len)};
-        state.alloc::<SymbolData>(base).map(|mut res| {
-            res.hash = {
-                let mut hasher = DefaultHasher::new();
-                HeapTag::Symbol.hash(&mut hasher);
-                name.hash(&mut hasher);
-                hasher.finish()
-            };
-            
+        heap.alloc(base).map(|res| {
+            let mut res = unsafe { transmute::<Value, HeapValue<SymbolData>>(res) };
+
+            res.hash = hash;
             let data = unsafe {
                 let ptr = ((&mut *res) as *mut SymbolData).add(1) as *mut u8;
                 slice::from_raw_parts_mut(ptr, name.len())
@@ -631,6 +630,111 @@ impl Symbol {
                                               obj.len() - size_of::<SymbolData>());
             str::from_utf8_unchecked(bytes)
         }
+    }
+}
+
+// TODO: Use ephemerons
+pub struct SymbolTable {
+    symbols: Vec<Value>,
+    occupancy: usize,
+    hash_builder: RandomState
+}
+
+impl SymbolTable {
+    const VACANT: Value = Value::FALSE;
+
+    pub fn new() -> Self {
+        Self {
+            symbols: vec![Self::VACANT; 2],
+            occupancy: 0,
+            hash_builder: RandomState::new()
+        }
+    }
+
+    /// Only returns `None` if symbol was not found and then allocating it failed.
+    pub fn get(&mut self, heap: &mut MemoryManager<Object>, name: &str) -> Option<Symbol> {
+        self.ensure_vacancy();
+
+        let hash = self.hash_key(name);
+
+        match self.locate(name, hash) {
+            Ok(symbol) => Some(symbol),
+            Err(vacancy) => Symbol::create(heap, hash, name).map(|symbol| {
+                self.symbols[vacancy] = symbol.into();
+                self.occupancy += 1;
+                symbol
+            })
+        }
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut Symbol> {
+        self.symbols.iter_mut()
+            .filter_map(|v| if let Ok(_) = Symbol::try_from(*v) {
+                Some(unsafe { transmute::<&mut Value, &mut Symbol>(v) })
+            } else {
+                None
+            })
+    }
+
+    fn locate(&self, k: &str, hash: u64) -> Result<Symbol, usize> {
+        let capacity = self.symbols.len();
+
+        for collisions in 0..capacity {
+            let i = hash as usize + collisions & capacity - 1; // hash + collisions % capacity
+
+            match self.symbols[i] {
+                Self::VACANT => return Err(i),
+                symbol => {
+                    let symbol = unsafe { transmute::<Value, Symbol>(symbol) };
+                    if symbol.hash == hash && symbol.as_str() == k {
+                        return Ok(symbol);
+                    }
+                }
+            }
+        }
+        unreachable!() // If we got here this was called on a full table
+    }
+
+    fn ensure_vacancy(&mut self) {
+        if self.occupancy + 1 > self.symbols.len() >> 1 { // new_load_factor > 0.5
+            self.rehash();
+        }
+    }
+
+    fn rehash(&mut self) {
+        fn insert(this: &mut SymbolTable, symbol: Symbol) {
+            let hash = symbol.hash;
+            let capacity = this.symbols.len();
+
+            for collisions in 0..capacity {
+                let i = hash as usize + collisions & capacity - 1; // hash + collisions % capacity
+
+                match this.symbols[i] {
+                    SymbolTable::VACANT => {
+                        this.symbols[i] = symbol.into();
+                        return;
+                    },
+                    _ => continue // we are rehashing, cannot be equal to `symbol`
+                }
+            }
+            unreachable!() // If we got here this was called on a full table
+        }
+
+        let mut symbols = vec![Self::VACANT; self.symbols.len() << 1];
+        mem::swap(&mut self.symbols, &mut symbols);
+
+        for v in symbols {
+            match v {
+                Self::VACANT => {},
+                symbol => insert(self, unsafe { transmute::<Value, Symbol>(symbol) })
+            }
+        }
+    }
+
+    fn hash_key(&self, k: &str) -> u64 {
+        let mut hasher = self.hash_builder.build_hasher();
+        k.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -792,19 +896,17 @@ mod tests {
 
     #[test]
     fn test_symbol() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut heap = MemoryManager::new(1 << 12, 1 << 20);
+        let mut symbols = SymbolTable::new();
         let name = "foo";
-        let hash = {
-            let mut hasher = DefaultHasher::new();
-            HeapTag::Symbol.hash(&mut hasher);
-            name.hash(&mut hasher);
-            hasher.finish()
-        };
+        let hash = symbols.hash_key(name);
 
-        let s = Symbol::new(&mut state, name).unwrap();
+        let s = Symbol::new(&mut heap, &mut symbols, name).unwrap();
+        let t = Symbol::new(&mut heap, &mut symbols, name).unwrap();
        
         assert_eq!(s.hash, hash);
         assert_eq!(s.as_str(), name);
+        assert_eq!(Value::from(s), Value::from(t));
     }
 
     #[test]

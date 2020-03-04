@@ -1,11 +1,12 @@
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
-use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector};
+use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector, SymbolTable};
 
 pub struct State {
     heap: MemoryManager<Object>,
-    stack: Vec<Value>
+    stack: Vec<Value>,
+    symbol_table: SymbolTable
 }
 
 impl State {
@@ -15,7 +16,8 @@ impl State {
     pub fn new(initial_heap: usize, max_heap: usize) -> Self {
         Self {
             heap: MemoryManager::new(initial_heap, max_heap),
-            stack: Vec::with_capacity(Self::STACK_LEN)
+            stack: Vec::with_capacity(Self::STACK_LEN),
+            symbol_table: SymbolTable::new()
         }
     }
 
@@ -51,9 +53,9 @@ impl State {
     }
 
     pub unsafe fn push_symbol(&mut self, name: &str) {
-        let v = Symbol::new(self, name).unwrap_or_else(|| {
+        let v = Symbol::new(&mut self.heap, &mut self.symbol_table, name).unwrap_or_else(|| {
             self.collect_garbage();
-            Symbol::new(self, name).unwrap()
+            Symbol::new(&mut self.heap, &mut self.symbol_table, name).unwrap()
         });
         self.push(v.into())
     }
@@ -83,7 +85,10 @@ impl State {
     }
 
     pub unsafe fn collect_garbage(&mut self) {
-        self.heap.collect_garbage(&mut self.stack);
+        self.heap.collection()
+            .roots(self.stack.iter_mut().map(|v| v as *mut Value))
+            .roots(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)))
+            .finish();
     }
 }
 

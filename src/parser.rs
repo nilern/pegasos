@@ -82,13 +82,7 @@ impl<'a> Parser<'a> {
             },
             Some(Identifier(cs)) => {
                 if let Some(Identifier(cs)) = self.lexer.next() {
-                    let s = if let Some(s) = Symbol::new(state, cs) {
-                        s
-                    } else {
-                        unsafe { state.collect_garbage(); }
-                        Symbol::new(state, cs).unwrap()
-                    };
-                    state.push(s.into());
+                    unsafe { state.push_symbol(cs); }
                     Ok(())
                 } else {
                     unreachable!()
@@ -126,7 +120,8 @@ mod tests {
     fn test_symbol() {
         let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" foo ").peekable());
-        let symbol = Symbol::new(&mut state, "foo").unwrap();
+        unsafe { state.push_symbol("foo"); }
+        let symbol: Symbol = state.pop().unwrap().try_into().unwrap();
 
         parser.sexpr(&mut state).unwrap();
         let parsed: Value = state.pop().unwrap();
