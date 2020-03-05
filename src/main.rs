@@ -8,6 +8,7 @@ mod value;
 mod lexer;
 mod state;
 mod parser;
+mod bindings;
 mod interpreter;
 
 use lexer::Lexer;

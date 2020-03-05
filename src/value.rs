@@ -10,8 +10,9 @@ use std::slice;
 use std::str;
 
 use super::util::fsize;
+use super::bindings::Bindings;
 use super::gc::{ObjectReference, HeapObject, MemoryManager};
-use super::state::State; // TODO: Break import cycle
+use super::state::State;
 
 // ---
 
@@ -72,6 +73,8 @@ impl Value {
 
     const EXT_SHIFT: usize = 4;
     const EXT_MASK: usize = (1 << Self::EXT_SHIFT) - 1;
+
+    pub const ZERO: Self = Self(0 << Self::SHIFT | Tag::Fixnum as usize);
 
     pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Tag::Bool as usize);
     pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Tag::Bool as usize);
@@ -234,7 +237,7 @@ impl Display for Value {
 /// Bits 4-7 are type tag
 /// Other bits are len
 #[derive(Clone, Copy)]
-struct Header(usize);
+pub struct Header(usize);
 
 impl Header {
     const FWD_MASK: usize = 0b11;
@@ -245,7 +248,7 @@ impl Header {
 
     const BYTES_BIT: usize = 0b10;
 
-    fn new(type_tag: HeapTag, len: usize) -> Self {
+    pub fn new(type_tag: HeapTag, len: usize) -> Self {
         // FIXME: Check that `len` fits in 24 / 56 bits
         Self(len << Self::SIZE_SHIFT
             | (type_tag as usize) << Self::TYPE_SHIFT
@@ -301,15 +304,16 @@ impl Header {
 
 #[derive(Clone, Copy)]
 pub struct Object {
-    header: Header
+    pub header: Header
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
-enum HeapTag {
+pub enum HeapTag {
     String = 0x0,
     Symbol = 0x1,
     Pair = 0x2,
-    Vector = 0x3
+    Vector = 0x3,
+    Bindings = 0x4
 }
 
 impl HeapTag {
@@ -397,7 +401,8 @@ pub enum UnpackedHeapValue {
     Vector(Vector),
     String(PgsString),
     Symbol(Symbol),
-    Pair(Pair)
+    Pair(Pair),
+    Bindings(Bindings)
 }
 
 impl<T> Clone for HeapValue<T> {
@@ -423,6 +428,7 @@ impl HeapValue<()> {
             HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Pair => UnpackedHeapValue::Pair(Pair(HeapValue {value: self.value, _phantom: PhantomData})),
+            HeapTag::Bindings => UnpackedHeapValue::Bindings(Bindings(HeapValue {value: self.value, _phantom: PhantomData}))
         }
     }
 }
@@ -489,13 +495,15 @@ impl Display for HeapValue<()> {
                 }
 
                 ")".fmt(f)
-            }
+            },
+            UnpackedHeapValue::Bindings(_) => "#<environment>".fmt(f)
         }
     }
 }
 
 // ---
 
+#[derive(Clone, Copy)]
 pub struct Vector(HeapValue<Value>);
 
 impl Vector {
