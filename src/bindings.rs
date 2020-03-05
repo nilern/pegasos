@@ -9,7 +9,8 @@ pub struct Bindings(pub HeapValue<BindingsData>);
 
 #[repr(C)]
 pub struct BindingsData {
-    entries: Vector,
+    keys: Vector,
+    values: Vector,
     occupancy: Value
 }
 
@@ -20,17 +21,20 @@ impl Bindings {
         let base = Object {header: Header::new(HeapTag::Bindings, size_of::<BindingsData>() / size_of::<Value>())};
         state.alloc::<BindingsData>(base)
             .and_then(|mut bindings| {
-                Vector::new(state, 2*2).map(|vec| {
-                    bindings.entries = vec; // vec is already VACANT (= 0) initialized
-                    // occupancy is already 0
-                    Bindings(bindings)
+                Vector::new(state, 2).and_then(|keys| {
+                    Vector::new(state, 2).map(|values| {
+                        bindings.keys = keys; // keys are already VACANT (= 0) initialized
+                        bindings.values = values;
+                        // occupancy is already 0
+                        Bindings(bindings)
+                    })
                 })
             })
     }
 
     pub fn get(mut self, name: Symbol) -> Option<Value> {
         match self.locate(name) {
-            (i, true) => Some(self.entries[2*i + 1]),
+            (i, true) => Some(self.values[i]),
             (_, false) => None
         }
     }
@@ -44,8 +48,8 @@ impl Bindings {
 
     fn insert_noresize(mut self, name: Symbol, value: Value) {
         let (i, _) = self.locate(name);
-        self.entries[2*i] = name.into();
-        self.entries[2*i + 1] = value;
+        self.keys[i] = name.into();
+        self.values[i] = value;
         unsafe {
             self.occupancy = transmute::<usize, Value>(transmute::<Value, usize>(self.occupancy) + (1 << Value::SHIFT));
         }
@@ -58,7 +62,7 @@ impl Bindings {
         for collisions in 0..capacity {
             let i = hash + collisions & capacity - 1; // hash + collisions % capacity
 
-            match self.entries[2*i] {
+            match self.keys[i] {
                 Self::VACANT => return (i, false),
                 k => if k == Value::from(name) {
                     return (i, true);
@@ -77,20 +81,24 @@ impl Bindings {
     }
 
     fn rehash(mut self, state: &mut State) -> Option<()> {
-        Vector::new(state, 2 * self.entries.len())
-            .map(|mut entries| {
-                swap(&mut self.entries, &mut entries);
+        let len = 2 * self.keys.len();
 
-                for entry in entries.chunks_exact(2) {
-                    match entry[0] {
+        Vector::new(state, len).and_then(|mut keys| {
+            Vector::new(state, len).map(|mut values| {
+                swap(&mut self.keys, &mut keys);
+                swap(&mut self.values, &mut values);
+
+                for (i, &key) in keys.iter().enumerate() {
+                    match key {
                         Self::VACANT => {},
-                        name => self.insert_noresize(unsafe { transmute(name) }, entry[1])
+                        name => self.insert_noresize(unsafe { transmute(name) }, values[i])
                     }
                 }
             })
+        })
     }
 
-    fn capacity(self) -> usize { self.entries.len() / 2 }
+    fn capacity(self) -> usize { self.keys.len() }
 }
 
 impl Deref for Bindings {
