@@ -101,6 +101,10 @@ impl Bindings {
     fn capacity(self) -> usize { self.keys.len() }
 }
 
+impl From<Bindings> for Value {
+    fn from(bindings: Bindings) -> Self { bindings.0.into() }
+}
+
 impl Deref for Bindings {
     type Target = BindingsData;
 

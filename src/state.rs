@@ -1,12 +1,15 @@
+use std::iter;
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
 use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector, SymbolTable};
+use super::bindings::Bindings;
 
 pub struct State {
     heap: MemoryManager<Object>,
+    symbol_table: SymbolTable,
     stack: Vec<Value>,
-    symbol_table: SymbolTable
+    env: Value
 }
 
 impl State {
@@ -14,11 +17,14 @@ impl State {
     const STACK_LEN: usize = Self::STACK_SIZE / size_of::<Value>();
 
     pub fn new(initial_heap: usize, max_heap: usize) -> Self {
-        Self {
+        let mut res = Self {
             heap: MemoryManager::new(initial_heap, max_heap),
+            symbol_table: SymbolTable::new(),
             stack: Vec::with_capacity(Self::STACK_LEN),
-            symbol_table: SymbolTable::new()
-        }
+            env: Value::UNBOUND
+        };
+        res.env = Bindings::new(&mut res).unwrap().into();
+        res
     }
 
     pub fn push(&mut self, v: Value) {
@@ -87,6 +93,7 @@ impl State {
     pub unsafe fn collect_garbage(&mut self) {
         self.heap.collection()
             .roots(self.stack.iter_mut().map(|v| v as *mut Value))
+            .roots(iter::once(&mut self.env as *mut Value))
             .traverse()
             .weaks(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)));
     }
