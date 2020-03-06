@@ -70,7 +70,7 @@ impl<'a> Lexer<'a> {
 
         loop {
             match self.peek() {
-                Some(c) if c.is_alphabetic() => {
+                Some(c) if c.is_alphabetic() || c == '!' => {
                     let _ = self.chars.next();
                     len += 1;
                 },
@@ -120,7 +120,7 @@ impl<'a> Iterator for Lexer<'a> {
                     }
                 },
                 Some(c) if c.is_digit(10) => return self.number(Radix::Decimal),
-                Some(c) if c.is_alphabetic() => return self.identifier(),
+                Some(c) if c.is_alphabetic() || c == '!' => return self.identifier(),
                 None => return None,
                 _ => unimplemented!()
             }

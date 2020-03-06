@@ -10,7 +10,9 @@ enum Op {Eval, Continue}
 #[repr(usize)]
 enum FrameTag {
     Done = 0 << Value::SHIFT,
-    CondBranch = 1 << Value::SHIFT
+    CondBranch = 1 << Value::SHIFT,
+    Define = 2 << Value::SHIFT,
+    Set = 3 << Value::SHIFT
 }
 
 impl From<FrameTag> for Value {
@@ -29,6 +31,50 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                 UnpackedValue::ORef(oref) => match oref.unpack() {
                     UnpackedHeapValue::Pair(pair) => if let Ok(sym) = Symbol::try_from(pair.car) {
                         match sym.as_str() {
+                            "define" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(name) = Symbol::try_from(args.car) {
+                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                        let value_expr = rargs.car;
+
+                                        if rargs.cdr == Value::NIL {
+                                            state.pop();
+                                            state.push(name.into());
+                                            state.push(FrameTag::Define.into());
+                                            state.push(value_expr);
+                                        } else {
+                                            return Err(());
+                                        }
+                                    } else {
+                                        return Err(());
+                                    }
+                                } else {
+                                    return Err(());
+                                }
+                            } else {
+                                return Err(());
+                            },
+                            "set!" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(name) = Symbol::try_from(args.car) {
+                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                        let value_expr = rargs.car;
+
+                                        if rargs.cdr == Value::NIL {
+                                            state.pop();
+                                            state.push(name.into());
+                                            state.push(FrameTag::Set.into());
+                                            state.push(value_expr);
+                                        } else {
+                                            return Err(());
+                                        }
+                                    } else {
+                                        return Err(());
+                                    }
+                                } else {
+                                    return Err(());
+                                }
+                            } else {
+                                return Err(());
+                            },
                             "if" => if let Ok(args) = Pair::try_from(pair.cdr) {
                                 let condition = args.car;
                                 if let Ok(branches) = Pair::try_from(args.cdr) {
@@ -73,6 +119,11 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                     } else {
                         unimplemented!()
                     },
+                    UnpackedHeapValue::Symbol(_) => {
+                        state.lookup()?;
+                        state.push(1usize.try_into().unwrap());
+                        op = Op::Continue;
+                    },
                     UnpackedHeapValue::Vector(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                     UnpackedHeapValue::String(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                     _ => unimplemented!()
@@ -95,6 +146,24 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.pop();
                         state.push(res);
                         break;
+                    } else {
+                        return Err(());
+                    },
+                    FrameTag::Define => if value_count == 1 {
+                        let value = state.pop().unwrap();
+                        state.pop();
+                        state.push(value);
+                        unsafe { state.define(); }
+                        state.push(Value::try_from(1isize).unwrap());
+                    } else {
+                        return Err(());
+                    },
+                    FrameTag::Set => if value_count == 1 {
+                        let value = state.pop().unwrap();
+                        state.pop();
+                        state.push(value);
+                        state.set()?;
+                        state.push(Value::try_from(1isize).unwrap());
                     } else {
                         return Err(());
                     },
@@ -151,6 +220,26 @@ mod tests {
         let res = eval(&mut state);
 
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_variables() {
+        let mut state = State::new(1 << 12, 1 << 20);
+
+        let mut parser = Parser::new(Lexer::new("(define foo 5)").peekable());
+        parser.sexpr(&mut state).unwrap();
+        eval(&mut state).unwrap();
+        assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
+
+        let mut parser = Parser::new(Lexer::new("(set! foo 8)").peekable());
+        parser.sexpr(&mut state).unwrap();
+        eval(&mut state).unwrap();
+        assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
+
+        let mut parser = Parser::new(Lexer::new("foo").peekable());
+        parser.sexpr(&mut state).unwrap();
+        eval(&mut state).unwrap();
+        assert_eq!(state.pop().unwrap(), Value::try_from(8isize).unwrap());
     }
 
     #[test]

@@ -9,7 +9,7 @@ pub struct State {
     heap: MemoryManager<Object>,
     symbol_table: SymbolTable,
     stack: Vec<Value>,
-    env: Value
+    env: Bindings
 }
 
 impl State {
@@ -21,9 +21,9 @@ impl State {
             heap: MemoryManager::new(initial_heap, max_heap),
             symbol_table: SymbolTable::new(),
             stack: Vec::with_capacity(Self::STACK_LEN),
-            env: Value::UNBOUND
+            env: unsafe { transmute(Value::UNBOUND) } // HACK
         };
-        res.env = Bindings::new(&mut res).unwrap().into();
+        res.env = Bindings::new(&mut res).unwrap();
         res
     }
 
@@ -89,11 +89,38 @@ impl State {
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(vec.into())
     }
+
+    pub fn lookup(&mut self) -> Result<(), ()> {
+        let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // checked before call
+        self.env.get(name).map(|v| self.push(v)).ok_or(())
+    }
+
+    pub unsafe fn define(&mut self) {
+        let value = self.pop().unwrap();
+        let name = transmute::<Value, Symbol>(self.pop().unwrap()); // its type was checked before pushing it
+        self.env.insert(self, name, value).unwrap_or_else(|_| {
+            self.push(name.into());
+            self.push(value);
+            self.collect_garbage();
+            let value = self.pop().unwrap();
+            let name = transmute::<Value, Symbol>(self.pop().unwrap());
+            self.env.insert(self, name, value).unwrap()
+        });
+        self.push(Value::UNSPECIFIED)
+    }
+
+    pub fn set(&mut self) -> Result<(), ()> {
+        let value = self.pop().unwrap();
+        let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // its type was checked before pushing it
+        self.env.set(self, name, value)?;
+        Ok(self.stack.push(Value::UNSPECIFIED))
+    }
+
     // TODO: References from symbol table should be weak
     pub unsafe fn collect_garbage(&mut self) {
         self.heap.collection()
             .roots(self.stack.iter_mut().map(|v| v as *mut Value))
-            .roots(iter::once(&mut self.env as *mut Value))
+            .roots(iter::once(transmute::<&mut Bindings, *mut Value>(&mut self.env)))
             .traverse()
             .weaks(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)));
     }

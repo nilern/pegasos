@@ -46,6 +46,17 @@ impl Bindings {
             .ok_or(())
     }
 
+    // Returns `Err` if not found.
+    pub fn set(mut self, state: &mut State, name: Symbol, value: Value) -> Result<(), ()> {
+        match self.locate(name) {
+            (i, true) => {
+                self.values[i] = value;
+                Ok(())
+            },
+            (_, false) => Err(())
+        }
+    }
+
     fn insert_noresize(mut self, name: Symbol, value: Value) {
         let (i, _) = self.locate(name);
         self.keys[i] = name.into();
