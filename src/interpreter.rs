@@ -6,13 +6,26 @@ use super::value::{Value, UnpackedValue, UnpackedHeapValue, PgsString, Symbol, P
 
 enum Op {Eval, Continue}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(usize)]
-enum FrameTag {
+pub enum FrameTag {
     Done = 0 << Value::SHIFT,
     CondBranch = 1 << Value::SHIFT,
     Define = 2 << Value::SHIFT,
     Set = 3 << Value::SHIFT
+}
+
+impl FrameTag {
+    pub fn framesize(self) -> usize {
+        use FrameTag::*;
+
+        match self {
+            Done => 0,
+            CondBranch => 2,
+            Define => 1,
+            Set => 1
+        }
+    }
 }
 
 impl From<FrameTag> for Value {
@@ -42,16 +55,20 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(FrameTag::Define.into());
                                             state.push(value_expr);
                                         } else {
-                                            return Err(());
+                                            state.pop();
+                                            state.raise(())?;
                                         }
                                     } else {
-                                        return Err(());
+                                        state.pop();
+                                        state.raise(())?;
                                     }
                                 } else {
-                                    return Err(());
+                                    state.pop();
+                                    state.raise(())?;
                                 }
                             } else {
-                                return Err(());
+                                state.pop();
+                                state.raise(())?;
                             },
                             "set!" => if let Ok(args) = Pair::try_from(pair.cdr) {
                                 if let Ok(name) = Symbol::try_from(args.car) {
@@ -64,44 +81,51 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(FrameTag::Set.into());
                                             state.push(value_expr);
                                         } else {
-                                            return Err(());
+                                            state.pop();
+                                            state.raise(())?;
                                         }
                                     } else {
-                                        return Err(());
+                                        state.pop();
+                                        state.raise(())?;
                                     }
                                 } else {
-                                    return Err(());
+                                    state.pop();
+                                    state.raise(())?;
                                 }
                             } else {
-                                return Err(());
+                                state.pop();
+                                state.raise(())?;
                             },
                             "if" => if let Ok(args) = Pair::try_from(pair.cdr) {
                                 let condition = args.car;
+
                                 if let Ok(branches) = Pair::try_from(args.cdr) {
                                     let succeed = branches.car;
-                                    let fail = match branches.cdr.unpack() {
-                                        UnpackedValue::ORef(_) => if let Ok(failers) = Pair::try_from(branches.cdr) {
-                                            if failers.cdr == Value::NIL {
-                                                failers.car
-                                            } else {
-                                                return Err(());
-                                            }
+
+                                    if let Ok(rargs) = Pair::try_from(branches.cdr) {
+                                        let fail = rargs.car;
+
+                                        if rargs.cdr == Value::NIL {
+                                            state.pop();
+                                            state.push(succeed);
+                                            state.push(fail);
+                                            state.push(FrameTag::CondBranch.into());
+                                            state.push(condition);
                                         } else {
-                                            return Err(());
-                                        },
-                                        UnpackedValue::Nil => Value::UNSPECIFIED,
-                                        _ => return Err(())
-                                    };
-                                    state.pop();
-                                    state.push(succeed);
-                                    state.push(fail);
-                                    state.push(FrameTag::CondBranch.into());
-                                    state.push(condition);
+                                            state.pop();
+                                            state.raise(())?
+                                        }
+                                    } else {
+                                        state.pop();
+                                        state.raise(())?
+                                    }
                                 } else {
-                                    return Err(())
+                                    state.pop();
+                                    state.raise(())?
                                 }
                             } else {
-                                return Err(())
+                                state.pop();
+                                state.raise(())?
                             },
                             "quote" => if let Ok(args) = Pair::try_from(pair.cdr) {
                                 if args.cdr == Value::NIL {
@@ -109,10 +133,11 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     state.push(args.car);
                                     {op = Op::Continue; state.push(1usize.try_into().unwrap());};
                                 } else {
-                                    return Err(())
+                                    state.pop();
+                                    state.raise(())?
                                 }
                             } else {
-                                return Err(())
+                                state.raise(())?
                             },
                             _ => unimplemented!()
                         }
@@ -135,7 +160,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                 UnpackedValue::Unbound => unreachable!(),
                 UnpackedValue::Unspecified => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
                 UnpackedValue::Eof => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
-                UnpackedValue::Nil => return Err(()),
+                UnpackedValue::Nil => {state.pop(); state.raise(())?},
             }
 
             Op::Continue => {
@@ -147,7 +172,8 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.push(res);
                         break;
                     } else {
-                        return Err(());
+                        for _ in 0..value_count { state.pop(); }
+                        state.raise(())?;
                     },
                     FrameTag::Define => if value_count == 1 {
                         let value = state.pop().unwrap();
@@ -156,7 +182,8 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         unsafe { state.define(); }
                         state.push(Value::try_from(1isize).unwrap());
                     } else {
-                        return Err(());
+                        for _ in 0..value_count { state.pop(); }
+                        state.raise(())?;
                     },
                     FrameTag::Set => if value_count == 1 {
                         let value = state.pop().unwrap();
@@ -165,7 +192,8 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.set()?;
                         state.push(Value::try_from(1isize).unwrap());
                     } else {
-                        return Err(());
+                        for _ in 0..value_count { state.pop(); }
+                        state.raise(())?;
                     },
                     FrameTag::CondBranch => if value_count == 1 {
                         if state.pop().unwrap() != Value::FALSE {
@@ -179,7 +207,8 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         }
                         op = Op::Eval;
                     } else {
-                        return Err(());
+                        for _ in 0..value_count { state.pop(); }
+                        state.raise(())?;
                     }
                 }
             }

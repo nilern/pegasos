@@ -1,5 +1,6 @@
 extern crate rustyline;
 
+use std::io::stderr;
 use structopt::StructOpt;
 use rustyline::error::ReadlineError;
 
@@ -37,11 +38,20 @@ fn main() {
             Ok(line) => {
                 editor.add_history_entry(line.as_str());
 
+                state.unwind();
                 let mut parser = Parser::new(Lexer::new(&line).peekable());
                 match parser.sexpr(&mut state) {
                     Ok(()) => match eval(&mut state) {
                         Ok(()) => println!("Ack, result: {}", state.pop().unwrap()),
-                        Err(()) => println!("Runtime error.")
+                        Err(()) => {
+                            println!("Runtime error.");
+
+                            if debug {
+                                println!("");
+                                unsafe { state.dump(&mut stderr()); }
+                                println!("\n");
+                            }
+                        }
                     },
                     Err(()) => println!("Parse error.")
                 }

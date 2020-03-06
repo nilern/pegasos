@@ -1,7 +1,10 @@
+use std::fmt;
+use std::io;
 use std::iter;
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
+use super::interpreter::FrameTag;
 use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector, SymbolTable};
 use super::bindings::Bindings;
 
@@ -118,6 +121,16 @@ impl State {
         Ok(self.stack.push(Value::UNSPECIFIED))
     }
 
+    pub fn raise<T>(&mut self, err: () /* HACK */) -> Result<T, ()> {
+        // TODO: Actually try raising Scheme exception.
+        Err(err)
+    }
+
+    pub fn unwind(&mut self) {
+        // TODO: Also unwind env to top level
+        self.stack.truncate(0);
+    }
+
     // TODO: References from symbol table should be weak
     pub unsafe fn collect_garbage(&mut self) {
         self.heap.collection()
@@ -125,6 +138,64 @@ impl State {
             .roots(iter::once(transmute::<&mut Bindings, *mut Value>(&mut self.env)))
             .traverse()
             .weaks(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)));
+    }
+
+    pub unsafe fn dump<W: io::Write>(&self, dest: &mut W) -> io::Result<()> {
+        writeln!(dest, "environment:\n")?;
+        self.env.dump(dest)?;
+
+        writeln!(dest, "")?;
+
+        writeln!(dest, "stack trace:\n")?;
+        self.print_stacktrace(dest)?;
+
+        Ok(())
+    }
+
+    pub unsafe fn print_stacktrace<W: io::Write>(&self, dest: &mut W) -> io::Result<()> {
+        for (tag, slots) in self.stack_frames() {
+            writeln!(dest, "{:?}", tag)?;
+
+            for slot in slots.iter().rev() {
+                writeln!(dest, "\t{}", slot)?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    unsafe fn stack_frames<'a>(&'a self) -> Frames<'a> {
+        Frames {
+            stack: &self.stack,
+            index: self.stack.len() - 1,
+            done: self.stack.len() < 1
+        }
+    }
+}
+
+struct Frames<'a> {
+    stack: &'a [Value],
+    index: usize,
+    done: bool
+}
+
+impl<'a> Iterator for Frames<'a> {
+    type Item = (FrameTag, &'a [Value]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.done {
+            let i = self.index;
+            let tag = unsafe { transmute::<Value, FrameTag>(self.stack[i]) };
+            let len = tag.framesize();
+            if len + 1 >= i {
+                self.done = true;
+            } else {
+                self.index -= len + 1;
+            }
+            Some((tag, &self.stack[i - len..i]))
+        } else {
+            None
+        }
     }
 }
 

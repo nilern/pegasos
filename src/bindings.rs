@@ -1,3 +1,4 @@
+use std::io;
 use std::mem::{size_of, swap, transmute};
 use std::ops::{Deref, DerefMut};
 
@@ -110,6 +111,16 @@ impl Bindings {
     }
 
     fn capacity(self) -> usize { self.keys.len() }
+
+    pub fn dump<W: io::Write>(self, dest: &mut W) -> io::Result<()> {
+        for (k, v) in self.keys.iter().zip(self.values.iter()) {
+            if *k != Self::VACANT {
+                writeln!(dest, "{} = {}", k, v)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl From<Bindings> for Value {
