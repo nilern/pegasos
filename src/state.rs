@@ -9,19 +9,21 @@ pub struct State {
     heap: MemoryManager<Object>,
     symbol_table: SymbolTable,
     stack: Vec<Value>,
-    env: Bindings
+    env: Bindings,
+    debug: bool
 }
 
 impl State {
     const STACK_SIZE: usize = 1 << 12; // 4 kiB
     const STACK_LEN: usize = Self::STACK_SIZE / size_of::<Value>();
 
-    pub fn new(initial_heap: usize, max_heap: usize) -> Self {
+    pub fn new(initial_heap: usize, max_heap: usize, debug: bool) -> Self {
         let mut res = Self {
             heap: MemoryManager::new(initial_heap, max_heap),
             symbol_table: SymbolTable::new(),
             stack: Vec::with_capacity(Self::STACK_LEN),
-            env: unsafe { transmute(Value::UNBOUND) } // HACK
+            env: unsafe { transmute(Value::UNBOUND) }, // HACK
+            debug
         };
         res.env = Bindings::new(&mut res).unwrap();
         res

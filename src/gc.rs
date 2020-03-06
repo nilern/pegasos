@@ -153,8 +153,6 @@ impl<O: HeapObject> MemoryManager<O> {
     }
 }
 
-// FIXME: impl Drop
-
 // ---
 
 pub struct Collection<'a, O: HeapObject>(&'a mut MemoryManager<O>);

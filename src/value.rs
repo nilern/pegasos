@@ -887,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(1 << 12, 1 << 20, true);
         let len = 7;
         let i = 3;
         
@@ -903,7 +903,7 @@ mod tests {
 
     #[test]
     fn test_string() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(1 << 12, 1 << 20, true);
         let cs = "foo";
 
         let s = PgsString::new(&mut state, cs).unwrap();
@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn test_pair() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(1 << 12, 1 << 20, true);
         let a = Value::try_from(5isize).unwrap();
         let b = Value::try_from(8isize).unwrap();
 

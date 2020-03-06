@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_bindings() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(1 << 12, 1 << 20, true);
         let mut bindings = Bindings::new(&mut state).unwrap();
         let a = Value::try_from(5isize).unwrap();
         let b = Value::try_from(8isize).unwrap();

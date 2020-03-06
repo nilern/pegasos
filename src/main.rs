@@ -1,5 +1,6 @@
 extern crate rustyline;
 
+use structopt::StructOpt;
 use rustyline::error::ReadlineError;
 
 mod util;
@@ -18,8 +19,17 @@ use interpreter::eval;
 
 const PROMPT: &str = "pegasos> ";
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "pegasos")]
+struct CliArgs {
+    #[structopt(short, long)]
+    debug: bool
+}
+
 fn main() {
-    let mut state = State::new(1 << 16, 1 << 20);
+    let CliArgs {debug} = CliArgs::from_args();
+
+    let mut state = State::new(1 << 16, 1 << 20, debug);
     let mut editor = rustyline::Editor::<()>::new();
 
     loop {
