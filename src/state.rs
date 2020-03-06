@@ -1,4 +1,3 @@
-use std::fmt;
 use std::io;
 use std::iter;
 use std::mem::{size_of, transmute};
@@ -12,21 +11,19 @@ pub struct State {
     heap: MemoryManager<Object>,
     symbol_table: SymbolTable,
     stack: Vec<Value>,
-    env: Bindings,
-    debug: bool
+    env: Bindings
 }
 
 impl State {
     const STACK_SIZE: usize = 1 << 12; // 4 kiB
     const STACK_LEN: usize = Self::STACK_SIZE / size_of::<Value>();
 
-    pub fn new(initial_heap: usize, max_heap: usize, debug: bool) -> Self {
+    pub fn new(initial_heap: usize, max_heap: usize) -> Self {
         let mut res = Self {
             heap: MemoryManager::new(initial_heap, max_heap),
             symbol_table: SymbolTable::new(),
             stack: Vec::with_capacity(Self::STACK_LEN),
-            env: unsafe { transmute(Value::UNBOUND) }, // HACK
-            debug
+            env: unsafe { transmute(Value::UNBOUND) } // HACK
         };
         res.env = Bindings::new(&mut res).unwrap();
         res
@@ -117,7 +114,7 @@ impl State {
     pub fn set(&mut self) -> Result<(), ()> {
         let value = self.pop().unwrap();
         let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // its type was checked before pushing it
-        self.env.set(self, name, value)?;
+        self.env.set(name, value)?;
         Ok(self.stack.push(Value::UNSPECIFIED))
     }
 

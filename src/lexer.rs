@@ -1,5 +1,4 @@
 use std::convert::TryFrom;
-use std::iter::Peekable;
 use std::str::Chars;
 
 use super::value::Value;

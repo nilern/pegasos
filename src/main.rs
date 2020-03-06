@@ -30,7 +30,7 @@ struct CliArgs {
 fn main() {
     let CliArgs {debug} = CliArgs::from_args();
 
-    let mut state = State::new(1 << 16, 1 << 20, debug);
+    let mut state = State::new(1 << 16, 1 << 20);
     let mut editor = rustyline::Editor::<()>::new();
 
     loop {
@@ -48,7 +48,7 @@ fn main() {
 
                             if debug {
                                 println!("");
-                                unsafe { state.dump(&mut stderr()); }
+                                unsafe { state.dump(&mut stderr()).unwrap(); }
                                 println!("\n");
                             }
                         }

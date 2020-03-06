@@ -1,7 +1,6 @@
 use std::alloc::{self, Layout};
-use std::convert::TryFrom;
 use std::marker::PhantomData;
-use std::mem::{size_of, align_of, swap, transmute};
+use std::mem::{size_of, align_of, swap};
 use std::ptr;
 
 // ---

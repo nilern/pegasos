@@ -33,7 +33,7 @@ impl Bindings {
             })
     }
 
-    pub fn get(mut self, name: Symbol) -> Option<Value> {
+    pub fn get(self, name: Symbol) -> Option<Value> {
         match self.locate(name) {
             (i, true) => Some(self.values[i]),
             (_, false) => None
@@ -41,14 +41,14 @@ impl Bindings {
     }
 
     // Returns `Err` when had to grow and allocation failed.
-    pub fn insert(mut self, state: &mut State, name: Symbol, value: Value) -> Result<(), ()> {
+    pub fn insert(self, state: &mut State, name: Symbol, value: Value) -> Result<(), ()> {
         self.ensure_vacancy(state)
             .map(|_| self.insert_noresize(name, value))
             .ok_or(())
     }
 
     // Returns `Err` if not found.
-    pub fn set(mut self, state: &mut State, name: Symbol, value: Value) -> Result<(), ()> {
+    pub fn set(mut self, name: Symbol, value: Value) -> Result<(), ()> {
         match self.locate(name) {
             (i, true) => {
                 self.values[i] = value;
@@ -84,7 +84,7 @@ impl Bindings {
         unreachable!() // If we got here this was called on a full table
     }
 
-    fn ensure_vacancy(mut self, state: &mut State) -> Option<()> {
+    fn ensure_vacancy(self, state: &mut State) -> Option<()> {
         if unsafe { transmute::<Value, usize>(self.occupancy) >> Value::SHIFT } + 1 > self.capacity() / 2 {
             self.rehash(state)
         } else {
@@ -145,8 +145,8 @@ mod tests {
 
     #[test]
     fn test_bindings() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
-        let mut bindings = Bindings::new(&mut state).unwrap();
+        let mut state = State::new(1 << 12, 1 << 20);
+        let bindings = Bindings::new(&mut state).unwrap();
         let a = Value::try_from(5isize).unwrap();
         let b = Value::try_from(8isize).unwrap();
         let foo = unsafe {state.push_symbol("foo"); state.pop().unwrap().try_into().unwrap()};

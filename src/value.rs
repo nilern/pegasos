@@ -1,5 +1,5 @@
 use std::char;
-use std::collections::hash_map::{DefaultHasher, RandomState};
+use std::collections::hash_map::RandomState;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
 use std::hash::{Hash, Hasher, BuildHasher};
@@ -257,8 +257,6 @@ impl Header {
     }
 
     fn is_alignment_hole(mem: *const Self) -> bool { unsafe { (*mem).0 == 0 } }
-
-    fn data(&self) -> *mut u8 { unsafe { (self as *const Self).add(1) as *mut u8 } }
 
     fn len(&self) -> usize { self.0 >> Self::SIZE_SHIFT }
 
@@ -887,7 +885,7 @@ mod tests {
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
         let len = 7;
         let i = 3;
         
@@ -903,7 +901,7 @@ mod tests {
 
     #[test]
     fn test_string() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
         let cs = "foo";
 
         let s = PgsString::new(&mut state, cs).unwrap();
@@ -928,7 +926,7 @@ mod tests {
 
     #[test]
     fn test_pair() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
         let a = Value::try_from(5isize).unwrap();
         let b = Value::try_from(8isize).unwrap();
 

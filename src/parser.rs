@@ -25,7 +25,7 @@ impl<'a> Parser<'a> {
                             let _ = self.lexer.next();
 
                             state.push(Value::NIL);
-                            for i in 0..len {
+                            for _ in 0..len {
                                 unsafe { state.cons(); }
                             }
                             return Ok(());
@@ -37,7 +37,7 @@ impl<'a> Parser<'a> {
                                 return Err(());
                             }
 
-                            for i in 0..len {
+                            for _ in 0..len {
                                 unsafe { state.cons(); }
                             }
                             return Ok(());
@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
                 }
                 return Ok(());
             },
-            Some(Identifier(cs)) => {
+            Some(Identifier(_)) => {
                 if let Some(Identifier(cs)) = self.lexer.next() {
                     unsafe { state.push_symbol(cs); }
                     Ok(())
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_const() {
-        let mut state = State::new(1 << 16, 1 << 20, true);
+        let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" 23 ").peekable());
         parser.sexpr(&mut state).unwrap();
         assert_eq!(state.pop().unwrap(), Value::try_from(23isize).unwrap());
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_symbol() {
-        let mut state = State::new(1 << 16, 1 << 20, true);
+        let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" foo ").peekable());
         unsafe { state.push_symbol("foo"); }
         let symbol: Symbol = state.pop().unwrap().try_into().unwrap();
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_nil() {
-        let mut state = State::new(1 << 16, 1 << 20, true);
+        let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" () ").peekable());
 
         parser.sexpr(&mut state).unwrap();
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_proper() {
-        let mut state = State::new(1 << 16, 1 << 20, true);
+        let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5) ").peekable());
 
         parser.sexpr(&mut state).unwrap();
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_improper() {
-        let mut state = State::new(1 << 16, 1 << 20, true);
+        let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5 . 8) ").peekable());
 
         parser.sexpr(&mut state).unwrap();
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(1 << 16, 1 << 20, true);
+        let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" #(5) ").peekable());
 
         parser.sexpr(&mut state).unwrap();

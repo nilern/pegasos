@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_const() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
         
         state.push(Value::from('a'));
         eval(&mut state).unwrap();
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_nil() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
         
         state.push(Value::NIL);
         let res = eval(&mut state);
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_variables() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(define foo 5)").peekable());
         parser.sexpr(&mut state).unwrap();
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_quote() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("'()").peekable());
 
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_if() {
-        let mut state = State::new(1 << 12, 1 << 20, true);
+        let mut state = State::new(1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(if #t 42 23)").peekable());
 
@@ -298,13 +298,6 @@ mod tests {
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::try_from(42isize).unwrap());
-
-        let mut parser = Parser::new(Lexer::new("(if #f 42)").peekable());
-
-        parser.sexpr(&mut state).unwrap();
-        eval(&mut state).unwrap();
-
-        assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
     }
 }
 
