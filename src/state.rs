@@ -25,7 +25,7 @@ impl State {
             stack: Vec::with_capacity(Self::STACK_LEN),
             env: unsafe { transmute(Value::UNBOUND) } // HACK
         };
-        res.env = Bindings::new(&mut res).unwrap();
+        res.env = Bindings::new(&mut res, None).unwrap();
         res
     }
 

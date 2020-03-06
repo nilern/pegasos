@@ -1,4 +1,6 @@
+use std::convert::TryFrom;
 use std::io;
+use std::marker::PhantomData;
 use std::mem::{size_of, swap, transmute};
 use std::ops::{Deref, DerefMut};
 
@@ -10,6 +12,7 @@ pub struct Bindings(pub HeapValue<BindingsData>);
 
 #[repr(C)]
 pub struct BindingsData {
+    parent: Value,
     keys: Vector,
     values: Vector,
     occupancy: Value
@@ -18,12 +21,13 @@ pub struct BindingsData {
 impl Bindings {
     const VACANT: Value = Value::ZERO;
 
-    pub fn new(state: &mut State) -> Option<Bindings> {
+    pub fn new(state: &mut State, parent: Option<Bindings>) -> Option<Bindings> {
         let base = Object {header: Header::new(HeapTag::Bindings, size_of::<BindingsData>() / size_of::<Value>())};
         state.alloc::<BindingsData>(base)
             .and_then(|mut bindings| {
                 Vector::new(state, 2).and_then(|keys| {
                     Vector::new(state, 2).map(|values| {
+                        bindings.parent = parent.map_or(Value::FALSE, Value::from);
                         bindings.keys = keys; // keys are already VACANT (= 0) initialized
                         bindings.values = values;
                         // occupancy is already 0
@@ -34,9 +38,16 @@ impl Bindings {
     }
 
     pub fn get(self, name: Symbol) -> Option<Value> {
-        match self.locate(name) {
-            (i, true) => Some(self.values[i]),
-            (_, false) => None
+        let mut this = self;
+        loop {
+            match this.locate(name) {
+                (i, true) => return Some(this.values[i]),
+                (_, false) => if let Ok(parent) = Bindings::try_from(this.parent) {
+                    this = parent;
+                } else {
+                    return None;
+                }
+            }
         }
     }
 
@@ -48,13 +59,20 @@ impl Bindings {
     }
 
     // Returns `Err` if not found.
-    pub fn set(mut self, name: Symbol, value: Value) -> Result<(), ()> {
-        match self.locate(name) {
-            (i, true) => {
-                self.values[i] = value;
-                Ok(())
-            },
-            (_, false) => Err(())
+    pub fn set(self, name: Symbol, value: Value) -> Result<(), ()> {
+        let mut this = self;
+        loop {
+            match this.locate(name) {
+                (i, true) => {
+                    this.values[i] = value;
+                    return Ok(());
+                },
+                (_, false) => if let Ok(parent) = Bindings::try_from(this.parent) {
+                    this = parent;
+                } else {
+                    return Err(())
+                }
+            }
         }
     }
 
@@ -127,6 +145,22 @@ impl From<Bindings> for Value {
     fn from(bindings: Bindings) -> Self { bindings.0.into() }
 }
 
+impl TryFrom<Value> for Bindings {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if let Ok(oref) = HeapValue::try_from(value) {
+            if oref.heap_tag() == HeapTag::Bindings {
+                Ok(Bindings(HeapValue {value, _phantom: PhantomData}))
+            } else {
+                Err(())
+            }
+        } else {
+            Err(())
+        }
+    }
+}
+
 impl Deref for Bindings {
     type Target = BindingsData;
 
@@ -146,7 +180,7 @@ mod tests {
     #[test]
     fn test_bindings() {
         let mut state = State::new(1 << 12, 1 << 20);
-        let bindings = Bindings::new(&mut state).unwrap();
+        let bindings = Bindings::new(&mut state, None).unwrap();
         let a = Value::try_from(5isize).unwrap();
         let b = Value::try_from(8isize).unwrap();
         let foo = unsafe {state.push_symbol("foo"); state.pop().unwrap().try_into().unwrap()};

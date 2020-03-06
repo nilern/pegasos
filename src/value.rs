@@ -391,8 +391,8 @@ impl Iterator for PtrFields {
 // ---
 
 pub struct HeapValue<T> {
-    value: Value,
-    _phantom: PhantomData<*mut T>
+    pub value: Value,
+    pub _phantom: PhantomData<*mut T>
 }
 
 pub enum UnpackedHeapValue {
@@ -410,7 +410,7 @@ impl<T> Clone for HeapValue<T> {
 impl<T> Copy for HeapValue<T> {}
 
 impl<T> HeapValue<T> {
-    fn heap_tag(self) -> HeapTag { unsafe { (*self.as_ptr()).tag() } }
+    pub fn heap_tag(self) -> HeapTag { unsafe { (*self.as_ptr()).tag() } }
 
     fn as_ptr(self) -> *mut Object {
         unsafe { (self.data() as *mut Object).offset(-1) }
