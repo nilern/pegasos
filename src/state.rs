@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::io;
 use std::iter;
 use std::mem::{size_of, transmute};
@@ -44,8 +45,16 @@ impl State {
 
     pub fn peek(&self) -> Option<&Value> { self.stack.last() }
 
-    pub fn get(&self, i: usize) -> Option<&Value> {
-        self.stack.len().checked_sub(1 + i).and_then(|i| self.stack.get(i))
+    pub fn get(&self, i: usize) -> Option<Value> {
+        self.stack.len().checked_sub(1 + i).map(|i| self.stack[i])
+    }
+
+    pub fn put(&mut self, i: usize, v: Value) -> Result<(), ()> {
+        if let Some(i) = self.stack.len().checked_sub(1 + i) {
+            Ok(self.stack[i] = v)
+        } else {
+            Err(())
+        }
     }
 
     pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
@@ -91,6 +100,18 @@ impl State {
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(vec.into())
     }
+    
+    pub fn push_env(&mut self) { self.push(self.env.into()) }
+
+    pub fn set_env(&mut self, env: Bindings) { self.env = env }
+
+    pub unsafe fn push_scope(&mut self) {
+        let env = Bindings::new(self, Some(self.env)).unwrap_or_else(|| {
+            self.collect_garbage();
+            Bindings::new(self, Some(self.env)).unwrap()
+        });
+        self.env = env;
+    }
 
     pub fn lookup(&mut self) -> Result<(), ()> {
         let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // checked before call
@@ -108,7 +129,6 @@ impl State {
             let name = transmute::<Value, Symbol>(self.pop().unwrap());
             self.env.insert(self, name, value).unwrap()
         });
-        self.push(Value::UNSPECIFIED)
     }
 
     pub fn set(&mut self) -> Result<(), ()> {
@@ -183,7 +203,13 @@ impl<'a> Iterator for Frames<'a> {
         if !self.done {
             let i = self.index;
             let tag = unsafe { transmute::<Value, FrameTag>(self.stack[i]) };
-            let len = tag.framesize();
+            let (base_len, dynamic) = tag.framesize();
+            let len = if dynamic {
+                let dyn_len: usize = self.stack[i - 2].try_into().unwrap();
+                base_len + dyn_len + 1
+            } else {
+                base_len
+            };
             if len + 1 >= i {
                 self.done = true;
             } else {
