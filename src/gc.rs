@@ -40,15 +40,23 @@ struct Semispace<O: HeapObject> {
 }
 
 impl<O: HeapObject> Semispace<O> {
+    const ALIGN: usize = 1;
+
     fn new(size: usize) -> Self {
-        let layout = Layout::from_size_align(size, 1).unwrap();
+        let layout = Layout::from_size_align(size, Self::ALIGN).unwrap();
         let start = unsafe { alloc::alloc(layout) };
         let end = unsafe { start.add(size) }; // safe since alloc::alloc succeeded
         Self {start, end, phantom: PhantomData}
     }
 }
 
-// FIXME: impl Drop
+impl<O: HeapObject> Drop for Semispace<O> {
+    fn drop(&mut self) {
+        unsafe {
+            alloc::dealloc(self.start, Layout::from_size_align(self.end as usize - self.start as usize, Self::ALIGN).unwrap());
+        }
+    }
+}
 
 // ---
 
