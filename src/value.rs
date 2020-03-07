@@ -246,7 +246,8 @@ impl Header {
     const TYPE_MASK: usize = 0b1111;
     const SIZE_SHIFT: usize = 8;
 
-    const BYTES_BIT: usize = 0b10;
+    const BYTES_BIT: usize = 0b100;
+    const SKIP_BIT: usize = 0b1000;
 
     pub fn new(type_tag: HeapTag, len: usize) -> Self {
         // FIXME: Check that `len` fits in 24 / 56 bits
@@ -283,6 +284,8 @@ impl Header {
     }
 
     fn is_bytes(&self) -> bool { self.0 & Self::BYTES_BIT == Self::BYTES_BIT }
+
+    fn skips(&self) -> bool { self.0 & Self::SKIP_BIT == Self::SKIP_BIT }
 
     fn is_forwarding(&self) -> bool { self.0 & Self::FWD_MASK == Self::FWD_TAG }
  
@@ -341,6 +344,8 @@ impl Object {
 
     fn is_bytes(&self) -> bool { self.header.is_bytes() }
 
+    fn skips(&self) -> bool { self.header.skips() }
+
     fn len(&self) -> usize { self.header.len() }
 }
 
@@ -370,9 +375,20 @@ pub struct PtrFields {
 impl PtrFields {
     fn new(obj: *mut Object) -> Self {
         let obj = unsafe { &mut *obj };
+        // OPTIMIZE:
         Self {
-            ptr: obj.data() as *mut Value,
-            len: if obj.is_bytes() { 0 } else { obj.len() }
+            ptr: if obj.skips() {
+                unsafe { (obj.data() as *mut Value).add(1) }
+            } else {
+                obj.data() as *mut Value
+            },
+            len: if obj.is_bytes() {
+                0
+            } else if obj.skips() {
+                obj.len() - 1
+            } else {
+                obj.len()
+            }
         }
     }
 }
