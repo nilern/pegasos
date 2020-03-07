@@ -16,7 +16,8 @@ pub enum FrameTag {
     Define = 2 << Value::SHIFT,
     Set = 3 << Value::SHIFT,
     Let = 4 << Value::SHIFT,
-    Arg = 5 << Value::SHIFT
+    Arg = 5 << Value::SHIFT,
+    Stmt = 6 << Value::SHIFT
 }
 
 impl FrameTag {
@@ -29,7 +30,8 @@ impl FrameTag {
             Define => (2, false),
             Set => (2, false),
             Let => (4, true),
-            Arg => (2, true)
+            Arg => (2, true),
+            Stmt => (2, false)
         }
     }
 }
@@ -101,6 +103,23 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                 } else {
                                     state.pop();
                                     state.raise(())?;
+                                }
+                            } else {
+                                state.pop();
+                                state.raise(())?;
+                            },
+                            "begin" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                let stmt = args.car;
+
+                                if args.cdr == Value::NIL {
+                                    state.pop();
+                                    state.push(stmt);
+                                } else {
+                                    state.pop();
+                                    state.push(args.cdr);
+                                    state.push_env();
+                                    state.push(FrameTag::Stmt.into());
+                                    state.push(stmt);
                                 }
                             } else {
                                 state.pop();
@@ -409,6 +428,24 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
                     },
+                    FrameTag::Stmt => {
+                        let stmts = state.get(value_count + 2).unwrap();
+
+                        if let Ok(stmts) = Pair::try_from(stmts) {
+                            for _ in 0..value_count { state.pop(); }
+                            state.put(2, stmts.cdr);
+                            state.push(stmts.car);
+                            op = Op::Eval;
+                        } else if stmts == Value::NIL {
+                            for _ in 0..(FrameTag::Stmt.framesize().0 + 1) {
+                                state.remove(value_count);
+                            }
+                            state.push(value_count.try_into().unwrap());
+                        } else {
+                            for _ in 0..value_count { state.pop(); }
+                            state.raise(())?;
+                        }
+                    },
                     FrameTag::Arg => if value_count == 1 {
                         let value = state.pop().unwrap();
                         let i: usize = state.get(2).unwrap().try_into().unwrap();
@@ -564,6 +601,23 @@ mod tests {
         assert_eq!(state.pop().unwrap(), Value::NIL);
 
         let mut parser = Parser::new(Lexer::new("(quote () ())").peekable());
+
+        parser.sexpr(&mut state).unwrap();
+        assert!(eval(&mut state).is_err());
+    }
+
+    #[test]
+    fn test_begin() {
+        let mut state = State::new(1 << 12, 1 << 20);
+
+        let mut parser = Parser::new(Lexer::new("(begin 42 23)").peekable());
+
+        parser.sexpr(&mut state).unwrap();
+        eval(&mut state).unwrap();
+
+        assert_eq!(state.pop().unwrap(), Value::try_from(23isize).unwrap());
+
+        let mut parser = Parser::new(Lexer::new("(begin)").peekable());
 
         parser.sexpr(&mut state).unwrap();
         assert!(eval(&mut state).is_err());
