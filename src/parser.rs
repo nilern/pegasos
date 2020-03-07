@@ -2,7 +2,7 @@ use std::iter::Peekable;
 
 use super::lexer::{Token, Lexer};
 use super::state::State;
-use super::value::{Value, HeapValue, Symbol, Pair, Vector};
+use super::value::{Value, Symbol, Pair, Vector};
 
 pub struct Parser<'a> {
     lexer: Peekable<Lexer<'a>>
@@ -125,7 +125,6 @@ mod tests {
 
         parser.sexpr(&mut state).unwrap();
         let parsed: Value = state.pop().unwrap();
-        let parsed: HeapValue<()> = parsed.try_into().unwrap();
         let parsed: Symbol = parsed.try_into().unwrap();
 
         assert_eq!(parsed.as_str(), symbol.as_str());

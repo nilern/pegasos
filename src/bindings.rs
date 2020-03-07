@@ -1,14 +1,9 @@
 use std::convert::TryFrom;
 use std::io;
-use std::marker::PhantomData;
 use std::mem::{size_of, swap, transmute};
-use std::ops::{Deref, DerefMut};
 
 use super::state::State;
-use super::value::{Value, HeapValue, Vector, Symbol, Header, HeapTag, Object};
-
-#[derive(Clone, Copy)]
-pub struct Bindings(pub HeapValue<BindingsData>);
+use super::value::{Heaped, Value, HeapValue, Vector, Symbol, Header, HeapTag, Object};
 
 #[repr(C)]
 pub struct BindingsData {
@@ -18,9 +13,13 @@ pub struct BindingsData {
     occupancy: Value
 }
 
-impl Bindings {
-    const VACANT: Value = Value::ZERO;
+impl Heaped for BindingsData {
+    const TAG: HeapTag = HeapTag::Bindings;
+}
 
+pub type Bindings = HeapValue<BindingsData>;
+
+impl Bindings {
     pub fn new(state: &mut State, parent: Option<Bindings>) -> Option<Bindings> {
         let base = Object {header: Header::new(HeapTag::Bindings, size_of::<BindingsData>() / size_of::<Value>())};
         state.alloc::<BindingsData>(base)
@@ -31,11 +30,13 @@ impl Bindings {
                         bindings.keys = keys; // keys are already VACANT (= 0) initialized
                         bindings.values = values;
                         // occupancy is already 0
-                        Bindings(bindings)
+                        bindings
                     })
                 })
             })
     }
+
+    const VACANT: Value = Value::ZERO;
 
     pub fn get(self, name: Symbol) -> Option<Value> {
         let mut this = self;
@@ -139,36 +140,6 @@ impl Bindings {
 
         Ok(())
     }
-}
-
-impl From<Bindings> for Value {
-    fn from(bindings: Bindings) -> Self { bindings.0.into() }
-}
-
-impl TryFrom<Value> for Bindings {
-    type Error = (); // FIXME
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Ok(oref) = HeapValue::try_from(value) {
-            if oref.heap_tag() == HeapTag::Bindings {
-                Ok(Bindings(HeapValue {value, _phantom: PhantomData}))
-            } else {
-                Err(())
-            }
-        } else {
-            Err(())
-        }
-    }
-}
-
-impl Deref for Bindings {
-    type Target = BindingsData;
-
-    fn deref(&self) -> &Self::Target { &*self.0 }
-}
-
-impl DerefMut for Bindings {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
 }
 
 #[cfg(test)]

@@ -394,7 +394,11 @@ impl Iterator for PtrFields {
 
 // ---
 
-pub struct HeapValue<T> {
+pub trait Heaped {
+    const TAG: HeapTag;
+}
+
+pub struct HeapValue<T: ?Sized> {
     pub value: Value,
     pub _phantom: PhantomData<*mut T>
 }
@@ -408,13 +412,13 @@ pub enum UnpackedHeapValue {
     Closure(Closure)
 }
 
-impl<T> Clone for HeapValue<T> {
+impl<T: ?Sized> Clone for HeapValue<T> {
     fn clone(&self) -> Self { Self {value: self.value, _phantom: self._phantom} }
 }
 
-impl<T> Copy for HeapValue<T> {}
+impl<T: ?Sized> Copy for HeapValue<T> {}
 
-impl<T> HeapValue<T> {
+impl<T: ?Sized> HeapValue<T> {
     pub fn heap_tag(self) -> HeapTag { unsafe { (*self.as_ptr()).tag() } }
 
     fn as_ptr(self) -> *mut Object {
@@ -427,12 +431,12 @@ impl<T> HeapValue<T> {
 impl HeapValue<()> {
     pub fn unpack(self) -> UnpackedHeapValue {
         match self.heap_tag() {
-            HeapTag::Vector => UnpackedHeapValue::Vector(Vector(HeapValue {value: self.value, _phantom: PhantomData})),
-            HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
-            HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
-            HeapTag::Pair => UnpackedHeapValue::Pair(Pair(HeapValue {value: self.value, _phantom: PhantomData})),
-            HeapTag::Bindings => UnpackedHeapValue::Bindings(Bindings(HeapValue {value: self.value, _phantom: PhantomData})),
-            HeapTag::Closure => UnpackedHeapValue::Closure(Closure(HeapValue {value: self.value, _phantom: PhantomData}))
+            HeapTag::Vector => UnpackedHeapValue::Vector(HeapValue {value: self.value, _phantom: PhantomData}),
+            HeapTag::String => UnpackedHeapValue::String(HeapValue {value: self.value, _phantom: PhantomData}),
+            HeapTag::Symbol => UnpackedHeapValue::Symbol(HeapValue {value: self.value, _phantom: PhantomData}),
+            HeapTag::Pair => UnpackedHeapValue::Pair(HeapValue {value: self.value, _phantom: PhantomData}),
+            HeapTag::Bindings => UnpackedHeapValue::Bindings(HeapValue {value: self.value, _phantom: PhantomData}),
+            HeapTag::Closure => UnpackedHeapValue::Closure(HeapValue {value: self.value, _phantom: PhantomData})
         }
     }
 }
@@ -447,7 +451,7 @@ impl<T> DerefMut for HeapValue<T> {
     fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut*(self.data() as *mut T) } }
 }
 
-impl<T> From<HeapValue<T>> for Value {
+impl<T: ?Sized> From<HeapValue<T>> for Value {
     fn from(v: HeapValue<T>) -> Self { v.value }
 }
 
@@ -457,6 +461,22 @@ impl TryFrom<Value> for HeapValue<()> {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         if value.base_tag() == BaseTag::ORef {
             Ok(Self {value, _phantom: PhantomData})
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl<T: Heaped + ?Sized> TryFrom<Value> for HeapValue<T> {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if let Ok(oref) = HeapValue::<()>::try_from(value) {
+            if oref.heap_tag() == T::TAG {
+                Ok(HeapValue {value: oref.value, _phantom: PhantomData})
+            } else {
+                Err(())
+            }
         } else {
             Err(())
         }
@@ -508,116 +528,98 @@ impl Display for HeapValue<()> {
 
 // ---
 
-#[derive(Clone, Copy)]
-pub struct Vector(HeapValue<Value>);
+pub type Vector = HeapValue<VectorData>;
+
+#[repr(C)]
+pub struct VectorData {
+    items: [Value]
+}
+
+impl Heaped for VectorData {
+    const TAG: HeapTag = HeapTag::Vector;
+}
 
 impl Vector {
     pub fn new(state: &mut State, len: usize) -> Option<Self> {
         let base = Object {header: Header::new(HeapTag::Vector, len)};
-        state.alloc(base).map(Vector)
-    }
-
-    pub fn as_slice(&self) -> &[Value] {
-        unsafe {
-            let obj = &mut *self.0.as_ptr();
-            slice::from_raw_parts(obj.data() as *const Value, obj.len())
-        }
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [Value] {
-        unsafe {
-            let obj = &mut *self.0.as_ptr();
-            slice::from_raw_parts_mut(obj.data() as *mut Value, obj.len())
-        }
-    }
-}
-
-impl From<Vector> for Value {
-    fn from(value: Vector) -> Self { value.0.into() }
-}
-
-impl TryFrom<Value> for Vector {
-    type Error = (); // FIXME
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Ok(oref) = HeapValue::try_from(value) {
-            if oref.heap_tag() == HeapTag::Vector {
-                Ok(Vector(HeapValue {value, _phantom: PhantomData}))
-            } else {
-                Err(())
-            }
-        } else {
-            Err(())
-        }
+        state.alloc(base)
     }
 }
 
 impl Deref for Vector {
     type Target = [Value];
 
-    fn deref(&self) -> &Self::Target { self.as_slice() }
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            slice::from_raw_parts(self.data() as *const Value, (*self.as_ptr()).len())
+        }
+    }
 }
 
 impl DerefMut for Vector {
-    fn deref_mut(&mut self) -> &mut Self::Target { self.as_mut_slice() }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            slice::from_raw_parts_mut(self.data() as *mut Value, (*self.as_ptr()).len())
+        }
+    }
 }
 
 // ---
 
-#[derive(Clone, Copy)]
-pub struct PgsString(HeapValue<u8>);
+pub type PgsString = HeapValue<PgsStringData>;
+
+#[repr(C)]
+pub struct PgsStringData {
+    chars: str
+}
+
+impl Heaped for PgsStringData {
+    const TAG: HeapTag = HeapTag::String;
+}
 
 impl PgsString {
     pub fn new(state: &mut State, cs: &str) -> Option<Self> {
         let len = cs.len();
         let base = Object {header: Header::new(HeapTag::String, len)};
-        state.alloc(base).map(|mut res| {
-            let data = unsafe { slice::from_raw_parts_mut(&mut *res, len) };
+        state.alloc::<PgsStringData>(base).map(|res| {
+            let data = unsafe { slice::from_raw_parts_mut(res.data(), len) };
             data.copy_from_slice(cs.as_bytes());
-
-            PgsString(res)
+            res
         })
     }
+}
 
+impl PgsString {
     pub fn as_str(&self) -> &str {
         unsafe {
-            let obj = &mut *self.0.as_ptr();
-            let bytes = slice::from_raw_parts(obj.data(), obj.len());
+            let bytes = slice::from_raw_parts(self.data(), (*self.as_ptr()).len());
             str::from_utf8_unchecked(bytes)
         }
     }
+}
+
+impl Deref for PgsString {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target { self.as_str() }
 }
 
 impl Display for PgsString {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "\"{}\"", self.as_str()) }
 }
 
-impl From<PgsString> for Value {
-    fn from(s: PgsString) -> Self { s.0.into() }
-}
-
-impl TryFrom<Value> for PgsString {
-    type Error = (); // FIXME
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        HeapValue::try_from(value).and_then(|oref| {
-            if oref.heap_tag() == HeapTag::String {
-                Ok(Self(HeapValue {value: oref.value, _phantom: PhantomData}))
-            } else {
-                Err(())
-            }
-        })
-    }
-}
-
 // ---
 
-#[derive(Clone, Copy)]
-pub struct Symbol(HeapValue<SymbolData>);
-
+#[repr(C)]
 pub struct SymbolData {
     pub hash: u64
 }
+
+impl Heaped for SymbolData {
+    const TAG: HeapTag = HeapTag::Symbol;
+}
+
+pub type Symbol = HeapValue<SymbolData>;
 
 impl Symbol {
     pub fn new(heap: &mut MemoryManager<Object>, symbols: &mut SymbolTable, name: &str) -> Option<Self> {
@@ -637,15 +639,16 @@ impl Symbol {
             };
             data.copy_from_slice(name.as_bytes());
 
-            Symbol(res)
+            res
         })
     }
+}
 
+impl Symbol {
     pub fn as_str(&self) -> &str {
         unsafe {
-            let obj = &mut *self.0.as_ptr();
-            let bytes = slice::from_raw_parts(obj.data().add(size_of::<SymbolData>()),
-                                              obj.len() - size_of::<SymbolData>());
+            let bytes = slice::from_raw_parts(self.data().add(size_of::<SymbolData>()),
+                                              (*self.as_ptr()).len() - size_of::<SymbolData>());
             str::from_utf8_unchecked(bytes)
         }
     }
@@ -760,44 +763,13 @@ impl SymbolTable {
     }
 }
 
-impl Deref for Symbol {
-    type Target = SymbolData;
-
-    fn deref(&self) -> &Self::Target { &*self.0 }
-}
-
-impl From<Symbol> for Value {
-    fn from(symbol: Symbol) -> Self { symbol.0.into() }
-}
-
-impl TryFrom<HeapValue<()>> for Symbol {
-    type Error = (); // FIXME
-
-    fn try_from(v: HeapValue<()>) -> Result<Self, Self::Error> {
-        if v.heap_tag() == HeapTag::Symbol {
-            Ok(Self(HeapValue {value: v.value, _phantom: PhantomData}))
-        } else {
-            Err(())
-        }
-    }
-}
-
-impl TryFrom<Value> for Symbol {
-    type Error = (); // FIXME
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        HeapValue::try_from(value).and_then(Self::try_from)
-    }
-}
-
 impl Display for Symbol {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.as_str().fmt(f) }
 }
 
 // ---
 
-#[derive(Clone, Copy)]
-pub struct Pair(HeapValue<PairData>);
+pub type Pair = HeapValue<PairData>;
 
 #[repr(C)]
 pub struct PairData {
@@ -805,10 +777,14 @@ pub struct PairData {
     pub cdr: Value
 }
 
+impl Heaped for PairData {
+    const TAG: HeapTag = HeapTag::Pair;
+}
+
 impl Pair {
     pub fn new(state: &mut State) -> Option<Self> {
         let base = Object {header: Header::new(HeapTag::Pair, size_of::<PairData>() / size_of::<Value>())};
-        state.alloc(base).map(Self)
+        state.alloc(base)
     }
 
     pub fn cons(state: &mut State, car: Value, cdr: Value) -> Option<Self> {
@@ -819,43 +795,7 @@ impl Pair {
     }
 }
 
-impl Deref for Pair {
-    type Target = PairData;
-
-    fn deref(&self) -> &Self::Target { &*self.0 }
-}
-
-impl DerefMut for Pair {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
-}
-
-impl From<Pair> for Value {
-    fn from(pair: Pair) -> Self { Value::from(pair.0) }
-}
-
-impl TryFrom<Value> for Pair {
-    type Error = (); // FIXME
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        HeapValue::try_from(value).and_then(|hv| {
-            if hv.heap_tag() == HeapTag::Pair {
-                Ok(Self(HeapValue {value, _phantom: PhantomData}))
-            } else {
-                Err(())
-            }
-        })
-    }
-}
-
 // ---
-
-#[derive(Clone, Copy)]
-pub struct Closure(HeapValue<ClosureData>);
-
-#[repr(C)]
-pub struct ClosureData {
-    pub code: usize
-}
 
 #[repr(usize)]
 pub enum Code {
@@ -874,55 +814,40 @@ impl TryFrom<usize> for Code {
     }
 }
 
+#[repr(C)]
+pub struct ClosureData {
+    pub code: usize
+}
+
+impl Heaped for ClosureData {
+    const TAG: HeapTag = HeapTag::Closure;
+}
+
+pub type Closure = HeapValue<ClosureData>;
+
 impl Closure {
     pub fn new(state: &mut State, code: usize, clover_count: usize) -> Option<Self> {
         let len = clover_count + 1;
         let base = Object {header: Header::new(HeapTag::Closure, len)};
         state.alloc::<ClosureData>(base).map(|mut res| {
             res.code = code;
-            Closure(res)
+            res
         })
     }
+}
 
+impl Closure {
     pub fn clovers(&self) -> &[Value] {
         unsafe {
-            let obj = &mut *self.0.as_ptr();
-            slice::from_raw_parts((obj.data() as *const Value).add(1), obj.len() - 1)
+            slice::from_raw_parts((self.data() as *const Value).add(1), (*self.as_ptr()).len() - 1)
         }
     }
 
     pub fn clovers_mut(&mut self) -> &mut [Value] {
         unsafe {
-            let obj = &mut *self.0.as_ptr();
-            slice::from_raw_parts_mut((obj.data() as *mut Value).add(1), obj.len() - 1)
+            slice::from_raw_parts_mut((self.data() as *mut Value).add(1), (*self.as_ptr()).len() - 1)
         }
     }
-}
-
-impl From<Closure> for Value {
-    fn from(f: Closure) -> Self { f.0.into() }
-}
-
-impl TryFrom<Value> for Closure {
-    type Error = (); // FIXME
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Ok(oref) = HeapValue::try_from(value) {
-            if oref.heap_tag() == HeapTag::Closure {
-                Ok(Closure(HeapValue {value, _phantom: PhantomData}))
-            } else {
-                Err(())
-            }
-        } else {
-            Err(())
-        }
-    }
-}
-
-impl Deref for Closure {
-    type Target = ClosureData;
-
-    fn deref(&self) -> &Self::Target { &*self.0 }
 }
 
 // ---

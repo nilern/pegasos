@@ -66,7 +66,7 @@ impl State {
         self.stack.len().checked_sub(1 + i).map(|i| self.stack.remove(i)).unwrap();
     }
 
-    pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
+    pub fn alloc<T: ?Sized>(&mut self, base: Object) -> Option<HeapValue<T>> {
         self.heap.alloc(base).map(|v| unsafe { transmute(v) })
     }
 
