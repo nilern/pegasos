@@ -1,8 +1,6 @@
 use std::convert::{TryFrom, TryInto};
-use std::io::stderr;
 use std::mem::transmute;
 
-use super::bindings::Bindings;
 use super::state::State;
 use super::value::{Value, UnpackedValue, UnpackedHeapValue, PgsString, Symbol, Pair, Closure, Code, Vector};
 
@@ -433,7 +431,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
 
                         if let Ok(stmts) = Pair::try_from(stmts) {
                             for _ in 0..value_count { state.pop(); }
-                            state.put(2, stmts.cdr);
+                            state.put(2, stmts.cdr)?;
                             state.push(stmts.car);
                             op = Op::Eval;
                         } else if stmts == Value::NIL {
@@ -456,7 +454,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             state.pop(); // frame tag
                             state.pop(); // env
                             state.pop(); // i
-                            state.put(i, rargs.cdr);
+                            state.put(i, rargs.cdr)?;
                             state.push(value);
                             state.push((i + 1).try_into().unwrap());
                             state.push_env();

@@ -11,7 +11,6 @@ use std::str;
 
 use super::util::fsize;
 use super::bindings::Bindings;
-use super::interpreter;
 use super::gc::{ObjectReference, HeapObject, MemoryManager};
 use super::state::State;
 
