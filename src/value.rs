@@ -11,6 +11,7 @@ use std::str;
 
 use super::util::fsize;
 use super::bindings::Bindings;
+use super::interpreter;
 use super::gc::{ObjectReference, HeapObject, MemoryManager};
 use super::state::State;
 
@@ -233,7 +234,7 @@ impl Display for Value {
 /// Bit 0 (LSB) is always set, for heap parsability (header vs. alignment padding).
 /// Bit 1 is mark (forwarded) bit
 /// Bit 2 is bytes bit
-/// Bit 3 is unused
+/// Bit 3 is skip (closure) bit
 /// Bits 4-7 are type tag
 /// Other bits are len
 #[derive(Clone, Copy)]
@@ -250,10 +251,11 @@ impl Header {
 
     pub fn new(type_tag: HeapTag, len: usize) -> Self {
         // FIXME: Check that `len` fits in 24 / 56 bits
-        Self(len << Self::SIZE_SHIFT
+        Self( len << Self::SIZE_SHIFT
             | (type_tag as usize) << Self::TYPE_SHIFT
+            | (type_tag.skips() as usize) << 3
             | (type_tag.is_bytes() as usize) << 2
-            | 0b01)
+            | 0b01 )
     }
 
     fn is_alignment_hole(mem: *const Self) -> bool { unsafe { (*mem).0 == 0 } }
@@ -311,13 +313,16 @@ pub enum HeapTag {
     Symbol = 0x1,
     Pair = 0x2,
     Vector = 0x3,
-    Bindings = 0x4
+    Bindings = 0x4,
+    Closure = 0x5
 }
 
 impl HeapTag {
     const FIRST_REFS: usize = Self::Pair as usize;
 
     fn is_bytes(self) -> bool { (self as usize) < Self::FIRST_REFS }
+    
+    fn skips(self) -> bool { self == Self::Closure }
 
     fn align(self) -> usize {
         if self.is_bytes() {
@@ -400,7 +405,8 @@ pub enum UnpackedHeapValue {
     String(PgsString),
     Symbol(Symbol),
     Pair(Pair),
-    Bindings(Bindings)
+    Bindings(Bindings),
+    Closure(Closure)
 }
 
 impl<T> Clone for HeapValue<T> {
@@ -426,7 +432,8 @@ impl HeapValue<()> {
             HeapTag::String => UnpackedHeapValue::String(PgsString(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Symbol => UnpackedHeapValue::Symbol(Symbol(HeapValue {value: self.value, _phantom: PhantomData})),
             HeapTag::Pair => UnpackedHeapValue::Pair(Pair(HeapValue {value: self.value, _phantom: PhantomData})),
-            HeapTag::Bindings => UnpackedHeapValue::Bindings(Bindings(HeapValue {value: self.value, _phantom: PhantomData}))
+            HeapTag::Bindings => UnpackedHeapValue::Bindings(Bindings(HeapValue {value: self.value, _phantom: PhantomData})),
+            HeapTag::Closure => UnpackedHeapValue::Closure(Closure(HeapValue {value: self.value, _phantom: PhantomData}))
         }
     }
 }
@@ -494,7 +501,8 @@ impl Display for HeapValue<()> {
 
                 ")".fmt(f)
             },
-            UnpackedHeapValue::Bindings(_) => "#<environment>".fmt(f)
+            UnpackedHeapValue::Bindings(_) => "#<environment>".fmt(f),
+            UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f)
         }
     }
 }
@@ -838,6 +846,84 @@ impl TryFrom<Value> for Pair {
             }
         })
     }
+}
+
+// ---
+
+#[derive(Clone, Copy)]
+pub struct Closure(HeapValue<ClosureData>);
+
+#[repr(C)]
+pub struct ClosureData {
+    pub code: usize
+}
+
+#[repr(usize)]
+pub enum Code {
+    ApplySelf = 0
+}
+
+impl TryFrom<usize> for Code {
+    type Error = ();
+
+    fn try_from(code: usize) -> Result<Self, Self::Error> {
+        if code < 256 { // HACK
+            Ok(unsafe { transmute::<usize, Self>(code) })
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl Closure {
+    pub fn new(state: &mut State, code: usize, clover_count: usize) -> Option<Self> {
+        let len = clover_count + 1;
+        let base = Object {header: Header::new(HeapTag::Closure, len)};
+        state.alloc::<ClosureData>(base).map(|mut res| {
+            res.code = code;
+            Closure(res)
+        })
+    }
+
+    pub fn clovers(&self) -> &[Value] {
+        unsafe {
+            let obj = &mut *self.0.as_ptr();
+            slice::from_raw_parts((obj.data() as *const Value).add(1), obj.len() - 1)
+        }
+    }
+
+    pub fn clovers_mut(&mut self) -> &mut [Value] {
+        unsafe {
+            let obj = &mut *self.0.as_ptr();
+            slice::from_raw_parts_mut((obj.data() as *mut Value).add(1), obj.len() - 1)
+        }
+    }
+}
+
+impl From<Closure> for Value {
+    fn from(f: Closure) -> Self { f.0.into() }
+}
+
+impl TryFrom<Value> for Closure {
+    type Error = (); // FIXME
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if let Ok(oref) = HeapValue::try_from(value) {
+            if oref.heap_tag() == HeapTag::Closure {
+                Ok(Closure(HeapValue {value, _phantom: PhantomData}))
+            } else {
+                Err(())
+            }
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl Deref for Closure {
+    type Target = ClosureData;
+
+    fn deref(&self) -> &Self::Target { &*self.0 }
 }
 
 // ---

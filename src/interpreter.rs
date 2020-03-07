@@ -1,10 +1,12 @@
 use std::convert::{TryFrom, TryInto};
+use std::io::stderr;
 use std::mem::transmute;
 
+use super::bindings::Bindings;
 use super::state::State;
-use super::value::{Value, UnpackedValue, UnpackedHeapValue, PgsString, Symbol, Pair};
+use super::value::{Value, UnpackedValue, UnpackedHeapValue, PgsString, Symbol, Pair, Closure, Code, Vector};
 
-enum Op {Eval, Continue}
+pub enum Op {Eval, Continue, Apply}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(usize)]
@@ -13,7 +15,8 @@ pub enum FrameTag {
     CondBranch = 1 << Value::SHIFT,
     Define = 2 << Value::SHIFT,
     Set = 3 << Value::SHIFT,
-    Let = 4 << Value::SHIFT
+    Let = 4 << Value::SHIFT,
+    Arg = 5 << Value::SHIFT
 }
 
 impl FrameTag {
@@ -25,7 +28,8 @@ impl FrameTag {
             CondBranch => (3, false),
             Define => (2, false),
             Set => (2, false),
-            Let => (4, true)
+            Let => (4, true),
+            Arg => (2, true)
         }
     }
 }
@@ -48,6 +52,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                     UnpackedHeapValue::Pair(pair) => if let Ok(sym) = Symbol::try_from(pair.car) {
                         match sym.as_str() {
                             "define" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                // FIXME: Fail if not on toplevel
                                 if let Ok(name) = Symbol::try_from(args.car) {
                                     if let Ok(rargs) = Pair::try_from(args.cdr) {
                                         let value_expr = rargs.car;
@@ -202,10 +207,76 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                 state.pop();
                                 state.raise(())?
                             },
-                            _ => unimplemented!()
+                            "lambda" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                let params = args.car;
+
+                                if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                    let body = rargs.car;
+
+                                    if rargs.cdr == Value::NIL {
+                                        state.pop();
+                                        state.push_env();
+                                        state.push(body);
+
+                                        let mut params = params;
+                                        let mut arity = 0;
+
+                                        while let Ok(param_pair) = Pair::try_from(params) {
+                                            if let Ok(param) = Symbol::try_from(param_pair.car) {
+                                                arity += 1;
+                                                params = param_pair.cdr;
+                                                state.push(param.into());
+                                            } else {
+                                                for _ in 0..(arity + 2) { state.pop(); }
+                                                state.raise(())?;
+                                            }
+                                        }
+
+                                        unsafe { state.vector(arity); }
+
+                                        if params == Value::NIL {
+                                            state.push(Value::FALSE);
+                                        } else {
+                                            if let Ok(rest_param) = Symbol::try_from(params) {
+                                                state.push(rest_param.into());
+                                            } else {
+                                                for _ in 0..3 { state.pop(); }
+                                                state.raise(())?;
+                                            }
+                                        }
+
+                                        unsafe { state.closure(Code::ApplySelf as usize, 4); }
+                                        state.push(1usize.try_into().unwrap());
+                                        op = Op::Continue;
+                                    } else {
+                                        state.pop();
+                                        state.raise(())?
+                                    }
+                                } else {
+                                    state.pop();
+                                    state.raise(())?
+                                }
+                            } else {
+                                state.pop();
+                                state.raise(())?
+                            },
+                            _ => {
+                                state.pop();
+                                state.push(pair.cdr);
+                                state.push(0isize.try_into().unwrap());
+                                state.push_env();
+                                state.push(FrameTag::Arg.into());
+                                state.push(pair.car);
+                            }
                         }
                     } else {
-                        unimplemented!()
+                        // TODO: DRY
+                        state.pop();
+                        state.push(pair.cdr);
+                        state.push(0isize.try_into().unwrap());
+                        state.push_env();
+                        state.push(FrameTag::Arg.into());
+                        state.push(pair.car);
                     },
                     UnpackedHeapValue::Symbol(_) => {
                         state.lookup()?;
@@ -323,6 +394,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                 state.push(name.into());
                                 state.push(value);
                                 unsafe { state.push_scope(); }
+                                // FIXME: It is an error for a <variable> to appear more than once
                                 for _ in 0..i / 2 + 1 { unsafe { state.define(); } }
                                 state.pop(); // name
                                 state.pop(); // bindings
@@ -336,7 +408,89 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                     } else {
                         for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
+                    },
+                    FrameTag::Arg => if value_count == 1 {
+                        let value = state.pop().unwrap();
+                        let i: usize = state.get(2).unwrap().try_into().unwrap();
+                        let rargs = state.get(3 + i).unwrap();
+
+                        // OPTIMIZE:
+                        if let Ok(rargs) = Pair::try_from(rargs) {
+                            state.pop(); // frame tag
+                            state.pop(); // env
+                            state.pop(); // i
+                            state.put(i, rargs.cdr);
+                            state.push(value);
+                            state.push((i + 1).try_into().unwrap());
+                            state.push_env();
+                            state.push(FrameTag::Arg.into());
+                            state.push(rargs.car);
+                            op = Op::Eval;
+                        } else if rargs == Value::NIL {
+                            state.pop(); // frame tag
+                            state.pop(); // env
+                            state.pop(); // i
+                            state.push(value);
+                            state.push(i.try_into().unwrap()); // argc for apply
+                            state.remove(i + 2); // rargs
+                            op = Op::Apply;
+                        } else {
+                            state.raise(())?;
+                        }
+                    } else {
+                        for _ in 0..value_count { state.pop(); }
+                        state.raise(())?;
                     }
+                }
+            },
+            Op::Apply => { // ... callee arg{argc} argc
+                let arg_count: usize = state.peek().unwrap().try_into().unwrap();
+
+                if let Ok(callee) = Closure::try_from(state.get(arg_count + 1).unwrap()) {
+                    match Code::try_from(callee.code) {
+                        Ok(Code::ApplySelf) => match callee.clovers() {
+                            &[env, body, params, rest_param] => {
+                                let params: Vector = params.try_into().unwrap();
+
+                                if arg_count == params.len()
+                                   || rest_param != Value::FALSE && arg_count >= params.len()
+                                {
+                                    // FIXME: It is an error for a <variable> to appear more than once
+                                    state.pop(); // argc
+                                    state.set_env(env.try_into().unwrap());
+                                    unsafe { state.push_scope(); }
+
+                                    if rest_param != Value::FALSE {
+                                        state.push(Value::NIL);
+                                        for _ in 0..arg_count - params.len() {
+                                            unsafe { state.cons(); }
+                                        }
+                                        state.push(rest_param);
+                                        state.swap();
+                                        unsafe { state.define(); }
+                                    }
+
+                                    for &param in params.iter().rev() {
+                                        state.push(param);
+                                        state.swap();
+                                        unsafe { state.define(); }
+                                    }
+
+                                    state.pop(); // callee
+                                    state.push(body);
+                                    op = Op::Eval;
+                                } else {
+                                    for _ in 0..(arg_count + 2) { state.pop(); }
+                                    state.raise(())?;
+                                }
+                            },
+                            _ => unreachable!()
+                        },
+                        Err(_) => unimplemented!()
+                    }
+                } else {
+                    for _ in 0..(arg_count + 2) { state.pop(); }
+                    state.raise(())?;
                 }
             }
         }
@@ -433,6 +587,18 @@ mod tests {
 
         let mut parser = Parser::new(Lexer::new("(let ((a (if #f 5 8)) (b #f)) (if b 42 a))").peekable());
 
+        parser.sexpr(&mut state).unwrap();
+        eval(&mut state).unwrap();
+
+        assert_eq!(state.pop().unwrap(), Value::try_from(8isize).unwrap());
+    }
+
+    #[test]
+    fn test_lambda() {
+        let mut state = State::new(1 << 12, 1 << 20);
+
+        let mut parser = Parser::new(Lexer::new("((lambda (a b) b) 5 8)").peekable());
+ 
         parser.sexpr(&mut state).unwrap();
         eval(&mut state).unwrap();
 

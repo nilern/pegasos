@@ -5,7 +5,7 @@ use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
 use super::interpreter::FrameTag;
-use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector, SymbolTable};
+use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure, Code};
 use super::bindings::Bindings;
 
 pub struct State {
@@ -43,7 +43,12 @@ impl State {
         self.stack.pop()
     }
 
-    pub fn peek(&self) -> Option<&Value> { self.stack.last() }
+    pub fn peek(&self) -> Option<Value> { self.stack.last().map(|&v| v) }
+
+    pub fn swap(&mut self) {
+        let len = self.stack.len();
+        self.stack.swap(len - 2, len - 1);
+    }
 
     pub fn get(&self, i: usize) -> Option<Value> {
         self.stack.len().checked_sub(1 + i).map(|i| self.stack[i])
@@ -55,6 +60,10 @@ impl State {
         } else {
             Err(())
         }
+    }
+
+    pub fn remove(&mut self, i: usize) {
+        self.stack.len().checked_sub(1 + i).map(|i| self.stack.remove(i)).unwrap();
     }
 
     pub fn alloc<T>(&mut self, base: Object) -> Option<HeapValue<T>> {
@@ -100,7 +109,19 @@ impl State {
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(vec.into())
     }
-    
+ 
+    pub unsafe fn closure(&mut self, code: usize, len: usize) {
+        debug_assert!(self.stack.len() >= len);
+        
+        let mut f = Closure::new(self, code, len).unwrap_or_else(|| {
+            self.collect_garbage();
+            Closure::new(self, code, len).unwrap()
+        });
+        f.clovers_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
+        self.stack.truncate(self.stack.len() - len);
+        self.stack.push(f.into())
+    }
+   
     pub fn push_env(&mut self) { self.push(self.env.into()) }
 
     pub fn set_env(&mut self, env: Bindings) { self.env = env }
