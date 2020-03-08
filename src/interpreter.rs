@@ -2,7 +2,8 @@ use std::convert::{TryFrom, TryInto};
 use std::mem::transmute;
 
 use super::state::State;
-use super::value::{Value, UnpackedValue, UnpackedHeapValue, PgsString, Symbol, Pair, Closure, Code, Vector};
+use super::objects::{PgsString, Symbol, Pair, Closure, Code, Vector};
+use super::refs::{Value, UnpackedValue, UnpackedHeapValue};
 
 pub enum Op {Eval, Continue, Apply}
 

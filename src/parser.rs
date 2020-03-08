@@ -1,8 +1,10 @@
+use std::convert::{TryFrom, TryInto};
 use std::iter::Peekable;
 
 use super::lexer::{Token, Lexer};
 use super::state::State;
-use super::value::{Value, Symbol, Pair, Vector};
+use super::objects::{Symbol, Pair, Vector};
+use super::refs::Value;
 
 pub struct Parser<'a> {
     lexer: Peekable<Lexer<'a>>
@@ -105,8 +107,6 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::convert::{TryFrom, TryInto};
 
     #[test]
     fn test_const() {

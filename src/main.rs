@@ -6,11 +6,11 @@ use rustyline::error::ReadlineError;
 
 mod util;
 mod gc;
-mod value;
+mod refs;
+mod objects;
 mod lexer;
 mod state;
 mod parser;
-mod bindings;
 mod interpreter;
 
 use lexer::Lexer;

@@ -5,8 +5,8 @@ use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
 use super::interpreter::FrameTag;
-use super::value::{Value, HeapValue, Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure};
-use super::bindings::Bindings;
+use super::objects::{Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure, Bindings};
+use super::refs::{Value, HeapValue};
 
 pub struct State {
     heap: MemoryManager<Object>,

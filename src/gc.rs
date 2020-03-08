@@ -14,7 +14,7 @@ pub trait HeapObject: Copy {
 
     fn is_alignment_hole(mem: *const Self) -> bool;
 
-    unsafe fn forwarding(oref: Self::Ref) -> Self;
+    unsafe fn forwarding(data: *const u8) -> Self;
     fn forward(&self) -> Option<Self::Ref>;
 
     fn size(&self) -> usize;
@@ -126,7 +126,7 @@ impl<O: HeapObject> MemoryManager<O> {
                         let res = self.alloc(*obj).unwrap(); // tospace is at least as big as fromspace
                         let new_obj = unsafe { &mut *res.as_mut_ptr().unwrap() }; // surely it is a pointer, we just allocated it
                         unsafe { ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size()); }
-                        *new_obj = unsafe { O::forwarding(res) };
+                        *new_obj = unsafe { O::forwarding(new_obj.data()) };
                         res
                     }
                 }
@@ -210,7 +210,7 @@ mod tests {
 
         fn is_alignment_hole(mem: *const Self) -> bool { unsafe { (*mem).0 == 0 } }
 
-        unsafe fn forwarding(ptr: *mut u8) -> Self { Self(ptr as usize | Self::FWD_TAG) }
+        unsafe fn forwarding(ptr: *const u8) -> Self { Self(ptr as usize | Self::FWD_TAG) }
 
         fn forward(&self) -> Option<*mut u8> {
             if self.0 & Self::MASK == Self::FWD_TAG {
@@ -237,7 +237,7 @@ mod tests {
 
         fn is_alignment_hole(mem: *const Self) -> bool { Hdr::is_alignment_hole(unsafe { &(*mem).header }) }
 
-        unsafe fn forwarding(oref: Self::Ref) -> Self { Self {header: Hdr::forwarding(oref)} }
+        unsafe fn forwarding(oref: *const u8) -> Self { Self {header: Hdr::forwarding(oref)} }
         fn forward(&self) -> Option<Self::Ref> { self.header.forward() }
 
         fn size(&self) -> usize { self.header.size() }

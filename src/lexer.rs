@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use std::str::Chars;
 
-use super::value::Value;
+use super::refs::Value;
 
 // ---
 
