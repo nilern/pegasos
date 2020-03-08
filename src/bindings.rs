@@ -21,8 +21,7 @@ pub type Bindings = HeapValue<BindingsData>;
 
 impl Bindings {
     pub fn new(state: &mut State, parent: Option<Bindings>) -> Option<Bindings> {
-        let base = Object {header: Header::new(HeapTag::Bindings, size_of::<BindingsData>() / size_of::<Value>())};
-        state.alloc::<BindingsData>(base)
+        state.alloc::<BindingsData>(Object::new(Header::new(HeapTag::Bindings, size_of::<BindingsData>() / size_of::<Value>())))
             .and_then(|mut bindings| {
                 Vector::new(state, 2).and_then(|keys| {
                     Vector::new(state, 2).map(|values| {

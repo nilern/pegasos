@@ -306,7 +306,7 @@ impl Header {
 
 #[derive(Clone, Copy)]
 pub struct Object {
-    pub header: Header
+    header: Header
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
@@ -340,6 +340,8 @@ impl HeapTag {
 }
 
 impl Object {
+    pub fn new(header: Header) -> Self { Self {header} }
+
     fn tag(&self) -> HeapTag { self.header.tag() }
 
     fn is_bytes(&self) -> bool { self.header.is_bytes() }
@@ -557,8 +559,7 @@ impl Heaped for VectorData {
 
 impl Vector {
     pub fn new(state: &mut State, len: usize) -> Option<Self> {
-        let base = Object {header: Header::new(HeapTag::Vector, len)};
-        state.alloc(base)
+        state.alloc(Object::new(Header::new(HeapTag::Vector, len)))
     }
 }
 
@@ -596,8 +597,7 @@ impl Heaped for PgsStringData {
 impl PgsString {
     pub fn new(state: &mut State, cs: &str) -> Option<Self> {
         let len = cs.len();
-        let base = Object {header: Header::new(HeapTag::String, len)};
-        state.alloc::<PgsStringData>(base).map(|res| {
+        state.alloc::<PgsStringData>(Object::new(Header::new(HeapTag::String, len))).map(|res| {
             let data = unsafe { slice::from_raw_parts_mut(res.data(), len) };
             data.copy_from_slice(cs.as_bytes());
             res
@@ -644,8 +644,7 @@ impl Symbol {
 
     fn create(heap: &mut MemoryManager<Object>, hash: u64, name: &str) -> Option<Self> {
         let len = size_of::<SymbolData>() + name.len();
-        let base = Object {header: Header::new(HeapTag::Symbol, len)};
-        heap.alloc(base).map(|res| {
+        heap.alloc(Object::new(Header::new(HeapTag::Symbol, len))).map(|res| {
             let mut res = unsafe { transmute::<Value, HeapValue<SymbolData>>(res) };
 
             res.hash = hash;
@@ -799,8 +798,7 @@ impl Heaped for PairData {
 
 impl Pair {
     pub fn new(state: &mut State) -> Option<Self> {
-        let base = Object {header: Header::new(HeapTag::Pair, size_of::<PairData>() / size_of::<Value>())};
-        state.alloc(base)
+        state.alloc(Object::new(Header::new(HeapTag::Pair, size_of::<PairData>() / size_of::<Value>())))
     }
 
     pub fn cons(state: &mut State, car: Value, cdr: Value) -> Option<Self> {
@@ -844,8 +842,7 @@ pub type Closure = HeapValue<ClosureData>;
 impl Closure {
     pub fn new(state: &mut State, code: usize, clover_count: usize) -> Option<Self> {
         let len = clover_count + 1;
-        let base = Object {header: Header::new(HeapTag::Closure, len)};
-        state.alloc::<ClosureData>(base).map(|mut res| {
+        state.alloc::<ClosureData>(Object::new(Header::new(HeapTag::Closure, len))).map(|mut res| {
             res.code = code;
             res
         })
