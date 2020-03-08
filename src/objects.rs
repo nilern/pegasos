@@ -48,9 +48,7 @@ impl HeapTag {
     }
 }
 
-pub trait Heaped {
-    const TAG: HeapTag;
-}
+// ---
 
 #[repr(usize)]
 pub enum Code {
@@ -65,6 +63,64 @@ impl TryFrom<usize> for Code {
             Ok(unsafe { transmute::<usize, Self>(code) })
         } else {
             Err(())
+        }
+    }
+}
+
+// ---
+
+pub trait Heaped {
+    const TAG: HeapTag;
+}
+
+pub enum UnpackedHeapValue {
+    Vector(Vector),
+    String(PgsString),
+    Symbol(Symbol),
+    Pair(Pair),
+    Bindings(Bindings),
+    Closure(Closure)
+}
+
+impl Display for UnpackedHeapValue {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            UnpackedHeapValue::Vector(vec) => {
+                "#(".fmt(f)?;
+
+                for (i, v) in vec.iter().enumerate() {
+                    if i > 0 {
+                        " ".fmt(f)?;
+                    }
+                    v.fmt(f)?;
+                }
+
+                ")".fmt(f)
+            },
+            UnpackedHeapValue::String(s) => s.fmt(f),
+            UnpackedHeapValue::Symbol(s) => s.fmt(f),
+            UnpackedHeapValue::Pair(mut p) => {
+                "(".fmt(f)?;
+
+                loop {
+                    p.car.fmt(f)?;
+
+                    if let Ok(cdr) = Pair::try_from(p.cdr) {
+                        " ".fmt(f)?;
+                        p = cdr;
+                    } else {
+                        break;
+                    }
+                }
+
+                if p.cdr != Value::NIL {
+                    write!(f, " . {}", p.cdr)?;
+                }
+
+                ")".fmt(f)
+            },
+            UnpackedHeapValue::Bindings(_) => "#<environment>".fmt(f),
+            UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f)
         }
     }
 }

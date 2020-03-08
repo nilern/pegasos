@@ -8,7 +8,7 @@ use std::mem::{self, size_of, transmute};
 use std::ops::{Deref, DerefMut};
 
 use super::gc::{ObjectReference, HeapObject};
-use super::objects::{Heaped, Object, HeapTag, Bindings, Closure, Pair, PgsString, Symbol, Vector};
+use super::objects::{Heaped, Object, HeapTag, UnpackedHeapValue};
 use super::util::fsize;
 
 // ---
@@ -28,8 +28,8 @@ enum Tag {
     Flonum = 0b10,
     Char = 0b0111, // (28 | 60) bit char
     Bool = 0b1011,
-    // 0b0011 is unused
-    Singleton = 0b1111 // '() etc.
+    Singleton = 0b0011, // '() etc.
+    FrameTag = 0b1111 // not visible on Scheme side
 }
 
 pub enum UnpackedValue {
@@ -41,16 +41,8 @@ pub enum UnpackedValue {
     Nil,
     Unbound,
     Unspecified,
-    Eof
-}
-
-pub enum UnpackedHeapValue {
-    Vector(Vector),
-    String(PgsString),
-    Symbol(Symbol),
-    Pair(Pair),
-    Bindings(Bindings),
-    Closure(Closure)
+    Eof,
+    FrameTag(FrameTag)
 }
 
 // ---
@@ -112,6 +104,8 @@ impl Value {
 
     pub fn is_oref(self) -> bool { self.base_tag() == BaseTag::ORef }
 
+    pub fn is_frame_tag(self) -> bool { self.tag() == Tag::FrameTag }
+
     pub fn unpack(self) -> UnpackedValue {
         match self.tag() {
             Tag::ORef => UnpackedValue::ORef(HeapValue {value: self, _phantom: PhantomData}),
@@ -124,7 +118,8 @@ impl Value {
                 Self::UNBOUND => UnpackedValue::Unbound,
                 Self::UNSPECIFIED => UnpackedValue::Unspecified,
                 _ => unimplemented!()
-            }
+            },
+            Tag::FrameTag => UnpackedValue::FrameTag(unsafe { transmute::<Value, FrameTag>(self) })
         }
     }
 
@@ -262,6 +257,40 @@ impl Display for Value {
 
 // ---
 
+#[derive(Debug, Clone, Copy)]
+#[repr(usize)]
+pub enum FrameTag {
+    Done = 0 << Value::EXT_SHIFT | Tag::FrameTag as usize,
+    CondBranch = 1 << Value::EXT_SHIFT | Tag::FrameTag as usize,
+    Define = 2 << Value::EXT_SHIFT | Tag::FrameTag as usize,
+    Set = 3 << Value::EXT_SHIFT | Tag::FrameTag as usize,
+    Let = 4 << Value::EXT_SHIFT | Tag::FrameTag as usize,
+    Arg = 5 << Value::EXT_SHIFT | Tag::FrameTag as usize,
+    Stmt = 6 << Value::EXT_SHIFT | Tag::FrameTag as usize
+}
+
+impl FrameTag {
+    pub fn framesize(self) -> (usize, bool) {
+        use FrameTag::*;
+
+        match self {
+            Done => (1, false),
+            CondBranch => (3, false),
+            Define => (2, false),
+            Set => (2, false),
+            Let => (4, true),
+            Arg => (2, true),
+            Stmt => (2, false)
+        }
+    }
+}
+
+impl From<FrameTag> for Value {
+    fn from(tag: FrameTag) -> Value { unsafe { transmute(tag) } }
+}
+
+// ---
+
 pub struct HeapValue<T: ?Sized> {
     pub value: Value,
     pub _phantom: PhantomData<*mut T>
@@ -341,46 +370,7 @@ impl<T: Heaped + ?Sized> TryFrom<Value> for HeapValue<T> {
 }
 
 impl Display for HeapValue<()> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self.unpack() {
-            UnpackedHeapValue::Vector(vec) => {
-                "#(".fmt(f)?;
-
-                for (i, v) in vec.iter().enumerate() {
-                    if i > 0 {
-                        " ".fmt(f)?;
-                    }
-                    v.fmt(f)?;
-                }
-
-                ")".fmt(f)
-            },
-            UnpackedHeapValue::String(s) => s.fmt(f),
-            UnpackedHeapValue::Symbol(s) => s.fmt(f),
-            UnpackedHeapValue::Pair(mut p) => {
-                "(".fmt(f)?;
-
-                loop {
-                    p.car.fmt(f)?;
-
-                    if let Ok(cdr) = Pair::try_from(p.cdr) {
-                        " ".fmt(f)?;
-                        p = cdr;
-                    } else {
-                        break;
-                    }
-                }
-
-                if p.cdr != Value::NIL {
-                    write!(f, " . {}", p.cdr)?;
-                }
-
-                ")".fmt(f)
-            },
-            UnpackedHeapValue::Bindings(_) => "#<environment>".fmt(f),
-            UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f)
-        }
-    }
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.unpack().fmt(f) }
 }
 
 // ---

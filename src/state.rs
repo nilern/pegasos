@@ -4,9 +4,8 @@ use std::iter;
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
-use super::interpreter::FrameTag;
 use super::objects::{Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure, Bindings};
-use super::refs::{Value, HeapValue};
+use super::refs::{Value, HeapValue, FrameTag};
 
 pub struct State {
     heap: MemoryManager<Object>,
@@ -222,6 +221,17 @@ impl<'a> Iterator for Frames<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.done {
+            loop {
+                if self.stack[self.index].is_frame_tag() {
+                    break;
+                } else if self.index == 0 {
+                    self.done = true;
+                    return None;
+                } else {
+                    self.index -= 1;
+                }
+            }
+
             let i = self.index;
             let tag = unsafe { transmute::<Value, FrameTag>(self.stack[i]) };
             let (base_len, dynamic) = tag.framesize();

@@ -2,42 +2,10 @@ use std::convert::{TryFrom, TryInto};
 use std::mem::transmute;
 
 use super::state::State;
-use super::objects::{PgsString, Symbol, Pair, Closure, Code, Vector};
-use super::refs::{Value, UnpackedValue, UnpackedHeapValue};
+use super::objects::{UnpackedHeapValue, PgsString, Symbol, Pair, Closure, Code, Vector};
+use super::refs::{Value, UnpackedValue, FrameTag};
 
 pub enum Op {Eval, Continue, Apply}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(usize)]
-pub enum FrameTag {
-    Done = 0 << Value::SHIFT,
-    CondBranch = 1 << Value::SHIFT,
-    Define = 2 << Value::SHIFT,
-    Set = 3 << Value::SHIFT,
-    Let = 4 << Value::SHIFT,
-    Arg = 5 << Value::SHIFT,
-    Stmt = 6 << Value::SHIFT
-}
-
-impl FrameTag {
-    pub fn framesize(self) -> (usize, bool) {
-        use FrameTag::*;
-
-        match self {
-            Done => (1, false),
-            CondBranch => (3, false),
-            Define => (2, false),
-            Set => (2, false),
-            Let => (4, true),
-            Arg => (2, true),
-            Stmt => (2, false)
-        }
-    }
-}
-
-impl From<FrameTag> for Value {
-    fn from(tag: FrameTag) -> Value { unsafe { transmute(tag) } }
-}
 
 pub fn eval(state: &mut State) -> Result<(), ()> {
     let mut op = Op::Eval;
@@ -65,19 +33,15 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(FrameTag::Define.into());
                                             state.push(value_expr);
                                         } else {
-                                            state.pop();
                                             state.raise(())?;
                                         }
                                     } else {
-                                        state.pop();
                                         state.raise(())?;
                                     }
                                 } else {
-                                    state.pop();
                                     state.raise(())?;
                                 }
                             } else {
-                                state.pop();
                                 state.raise(())?;
                             },
                             "set!" => if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -92,19 +56,15 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(FrameTag::Set.into());
                                             state.push(value_expr);
                                         } else {
-                                            state.pop();
                                             state.raise(())?;
                                         }
                                     } else {
-                                        state.pop();
                                         state.raise(())?;
                                     }
                                 } else {
-                                    state.pop();
                                     state.raise(())?;
                                 }
                             } else {
-                                state.pop();
                                 state.raise(())?;
                             },
                             "begin" => if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -121,7 +81,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     state.push(stmt);
                                 }
                             } else {
-                                state.pop();
                                 state.raise(())?;
                             },
                             "if" => if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -141,19 +100,15 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(FrameTag::CondBranch.into());
                                             state.push(condition);
                                         } else {
-                                            state.pop();
                                             state.raise(())?
                                         }
                                     } else {
-                                        state.pop();
                                         state.raise(())?
                                     }
                                 } else {
-                                    state.pop();
                                     state.raise(())?
                                 }
                             } else {
-                                state.pop();
                                 state.raise(())?
                             },
                             "quote" => if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -162,11 +117,9 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     state.push(args.car);
                                     {op = Op::Continue; state.push(1u16.into());};
                                 } else {
-                                    state.pop();
                                     state.raise(())?
                                 }
                             } else {
-                                state.pop();
                                 state.raise(())?
                             },
                             "let" => if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -195,34 +148,27 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                                         state.push(FrameTag::Let.into());
                                                         state.push(expr);
                                                     } else {
-                                                        state.pop();
                                                         state.raise(())?
                                                     }
                                                 } else {
-                                                    state.pop();
                                                     state.raise(())?
                                                 }
                                             } else {
-                                                state.pop();
                                                 state.raise(())?
                                             }
                                         } else if bindings == Value::NIL {
                                             state.pop();
                                             state.push(body);
                                         } else {
-                                            state.pop();
                                             state.raise(())?
                                         }
                                     } else {
-                                        state.pop();
                                         state.raise(())?
                                     }
                                 } else {
-                                    state.pop();
                                     state.raise(())?
                                 }
                             } else {
-                                state.pop();
                                 state.raise(())?
                             },
                             "lambda" => if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -245,7 +191,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                                 params = param_pair.cdr;
                                                 state.push(param.into());
                                             } else {
-                                                for _ in 0..(arity + 2) { state.pop(); }
                                                 state.raise(())?;
                                             }
                                         }
@@ -258,7 +203,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             if let Ok(rest_param) = Symbol::try_from(params) {
                                                 state.push(rest_param.into());
                                             } else {
-                                                for _ in 0..3 { state.pop(); }
                                                 state.raise(())?;
                                             }
                                         }
@@ -267,15 +211,12 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         state.push(1u16.into());
                                         op = Op::Continue;
                                     } else {
-                                        state.pop();
                                         state.raise(())?
                                     }
                                 } else {
-                                    state.pop();
                                     state.raise(())?
                                 }
                             } else {
-                                state.pop();
                                 state.raise(())?
                             },
                             _ => {
@@ -309,10 +250,11 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                 UnpackedValue::Flonum(_) => {op = Op::Continue; state.push(1u16.into());},
                 UnpackedValue::Char(_) => {op = Op::Continue; state.push(1u16.into());},
                 UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1u16.into());},
-                UnpackedValue::Unbound => unreachable!(),
                 UnpackedValue::Unspecified => {op = Op::Continue; state.push(1u16.into());},
                 UnpackedValue::Eof => {op = Op::Continue; state.push(1u16.into());},
-                UnpackedValue::Nil => {state.pop(); state.raise(())?},
+                UnpackedValue::Nil => state.raise(())?,
+                UnpackedValue::Unbound => unreachable!(),
+                UnpackedValue::FrameTag(_) => unreachable!()
             }
 
             Op::Continue => {
@@ -326,7 +268,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.push(res);
                         break;
                     } else {
-                        for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
                     },
                     FrameTag::Define => if value_count == 1 {
@@ -338,7 +279,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.push(Value::UNSPECIFIED);
                         state.push(1u16.into());
                     } else {
-                        for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
                     },
                     FrameTag::Set => if value_count == 1 {
@@ -349,7 +289,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.set()?;
                         state.push(1u16.into());
                     } else {
-                        for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
                     },
                     FrameTag::CondBranch => if value_count == 1 {
@@ -366,7 +305,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         }
                         op = Op::Eval;
                     } else {
-                        for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
                     },
                     FrameTag::Let => if value_count == 1 {
@@ -424,7 +362,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             state.raise(())?;
                         }
                     } else {
-                        for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
                     },
                     FrameTag::Stmt => {
@@ -441,7 +378,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             }
                             state.push(value_count.try_into().unwrap());
                         } else {
-                            for _ in 0..value_count { state.pop(); }
                             state.raise(())?;
                         }
                     },
@@ -474,7 +410,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             state.raise(())?;
                         }
                     } else {
-                        for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
                     }
                 }
@@ -516,7 +451,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     state.push(body);
                                     op = Op::Eval;
                                 } else {
-                                    for _ in 0..(arg_count + 2) { state.pop(); }
                                     state.raise(())?;
                                 }
                             },
@@ -525,7 +459,6 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         Err(_) => unimplemented!()
                     }
                 } else {
-                    for _ in 0..(arg_count + 2) { state.pop(); }
                     state.raise(())?;
                 }
             }
