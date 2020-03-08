@@ -1,7 +1,15 @@
 use std::convert::TryFrom;
+use std::fmt::{self, Display, Formatter};
 use std::str::Chars;
 
 use super::refs::Value;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Error;
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{:?}", self) }
+}
 
 // ---
 
@@ -12,6 +20,20 @@ pub enum Token<'a> {
     Quote,
     Identifier(&'a str),
     Const(Value)
+}
+
+impl<'a> Display for Token<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::OpenVector => write!(f, "#("),
+            Token::Dot => write!(f, "."),
+            Token::Quote => write!(f, "'"),
+            Token::Identifier(cs) => write!(f, "{}", cs),
+            Token::Const(v) => write!(f, "{}", v)
+        }
+    }
 }
 
 // ---
@@ -35,15 +57,15 @@ impl<'a> Lexer<'a> {
 
     fn peek(&self) -> Option<char> { self.chars.as_str().chars().next() }
 
-    fn boolean(&mut self) -> Option<Token<'a>> {
+    fn boolean(&mut self) -> Result<Token<'a>, Error> {
         match self.chars.next() {
-            Some('t') => return Some(Token::Const(Value::TRUE)),
-            Some('f') => return Some(Token::Const(Value::FALSE)),
+            Some('t') => return Ok(Token::Const(Value::TRUE)),
+            Some('f') => return Ok(Token::Const(Value::FALSE)),
             _ => unreachable!()
         }
     }
 
-    fn number(&mut self, radix: Radix) -> Option<Token<'a>> {
+    fn number(&mut self, radix: Radix) -> Result<Token<'a>, Error> {
         let mut res: Option<isize> = None;
 
         loop {
@@ -59,11 +81,12 @@ impl<'a> Lexer<'a> {
                     });
                 },
                 _ => return res.map(|n| Token::Const(Value::try_from(n).unwrap()))
+                               .ok_or(Error)
             }
         }
     }
 
-    fn identifier(&mut self) -> Option<Token<'a>> {
+    fn identifier(&mut self) -> Result<Token<'a>, Error> {
         let cs = self.chars.as_str();
         let mut len = 0;
 
@@ -73,14 +96,14 @@ impl<'a> Lexer<'a> {
                     let _ = self.chars.next();
                     len += 1;
                 },
-                _ => return Some(Token::Identifier(&cs[0..len]))
+                _ => return Ok(Token::Identifier(&cs[0..len]))
             }
         }
     }
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Token<'a>;
+    type Item = Result<Token<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         use Token::*;
@@ -92,34 +115,34 @@ impl<'a> Iterator for Lexer<'a> {
                 },
                 Some('(') => {
                     let _ = self.chars.next();
-                    return Some(LParen);
+                    return Some(Ok(LParen));
                 },
                 Some(')') => {
                     let _ = self.chars.next();
-                    return Some(RParen);
+                    return Some(Ok(RParen));
                 },
                 Some('.') => {
                     let _ = self.chars.next();
-                    return Some(Dot);
+                    return Some(Ok(Dot));
                 },
                 Some('\'') => {
                     let _ = self.chars.next();
-                    return Some(Quote);
+                    return Some(Ok(Quote));
                 },
                 Some('#') => {
                     let _ = self.chars.next();
                     match self.peek() {
-                        Some('t') => return self.boolean(),
-                        Some('f') => return self.boolean(),
+                        Some('t') => return Some(self.boolean()),
+                        Some('f') => return Some(self.boolean()),
                         Some('(') => {
                             let _ = self.chars.next();
-                            return Some(OpenVector);
+                            return Some(Ok(OpenVector));
                         }
                         _ => unimplemented!()
                     }
                 },
-                Some(c) if c.is_digit(10) => return self.number(Radix::Decimal),
-                Some(c) if c.is_alphabetic() || c == '!' => return self.identifier(),
+                Some(c) if c.is_digit(10) => return Some(self.number(Radix::Decimal)),
+                Some(c) if c.is_alphabetic() || c == '!' => return Some(self.identifier()),
                 None => return None,
                 _ => unimplemented!()
             }
@@ -136,7 +159,7 @@ mod tests {
         use Token::*;
 
         let input = "  (23 #f foo)  ";
-        let chars: Vec<Token> = Lexer::new(&input).collect();
+        let chars: Vec<Token> = Lexer::new(&input).map(Result::unwrap).collect();
         assert_eq!(chars, vec![LParen, Const(23i16.into()), Const(Value::FALSE), Identifier("foo"), RParen]);
     }
 }

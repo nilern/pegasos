@@ -4,6 +4,8 @@ use std::iter;
 use std::mem::{size_of, transmute};
 
 use super::gc::MemoryManager;
+use super::error::PgsError;
+use super::interpreter::RuntimeError;
 use super::objects::{Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure, Bindings};
 use super::refs::{Value, HeapValue, FrameTag};
 
@@ -53,12 +55,9 @@ impl State {
         self.stack.len().checked_sub(1 + i).map(|i| self.stack[i])
     }
 
-    pub fn put(&mut self, i: usize, v: Value) -> Result<(), ()> {
-        if let Some(i) = self.stack.len().checked_sub(1 + i) {
-            Ok(self.stack[i] = v)
-        } else {
-            Err(())
-        }
+    pub fn put(&mut self, i: usize, v: Value) {
+        let i = self.stack.len().checked_sub(1 + i).unwrap();
+        self.stack[i] = v;
     }
 
     pub fn remove(&mut self, i: usize) {
@@ -133,9 +132,9 @@ impl State {
         self.env = env;
     }
 
-    pub fn lookup(&mut self) -> Result<(), ()> {
+    pub fn lookup(&mut self) -> Result<(), RuntimeError> {
         let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // checked before call
-        self.env.get(name).map(|v| self.push(v)).ok_or(())
+        self.env.get(name).map(|v| self.push(v)).ok_or(RuntimeError::Unbound(name))
     }
 
     pub unsafe fn define(&mut self) {
@@ -151,16 +150,16 @@ impl State {
         });
     }
 
-    pub fn set(&mut self) -> Result<(), ()> {
+    pub fn set(&mut self) -> Result<(), RuntimeError> {
         let value = self.pop().unwrap();
         let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // its type was checked before pushing it
-        self.env.set(name, value)?;
+        self.env.set(name, value).map_err(|()| RuntimeError::Unbound(name))?;
         Ok(self.stack.push(Value::UNSPECIFIED))
     }
 
-    pub fn raise<T>(&mut self, err: () /* HACK */) -> Result<T, ()> {
+    pub fn raise<'a, T, E: Into<PgsError<'a>>>(&mut self, err: E) -> Result<T, PgsError<'a>> {
         // TODO: Actually try raising Scheme exception.
-        Err(err)
+        Err(err.into())
     }
 
     pub fn unwind(&mut self) {

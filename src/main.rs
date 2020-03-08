@@ -12,6 +12,7 @@ mod lexer;
 mod state;
 mod parser;
 mod interpreter;
+mod error;
 
 use lexer::Lexer;
 use parser::Parser;
@@ -41,10 +42,10 @@ fn main() {
                 state.unwind();
                 let mut parser = Parser::new(Lexer::new(&line).peekable());
                 match parser.sexpr(&mut state) {
-                    Ok(()) => match eval(&mut state) {
+                    Some(Ok(())) => match eval(&mut state) {
                         Ok(()) => println!("Ack, result: {}", state.pop().unwrap()),
-                        Err(()) => {
-                            println!("Runtime error.");
+                        Err(err) => {
+                            println!("Runtime error: {}", err);
 
                             if debug {
                                 println!("");
@@ -53,7 +54,8 @@ fn main() {
                             }
                         }
                     },
-                    Err(()) => println!("Parse error.")
+                    Some(Err(err)) => println!("Parse error: {}", err),
+                    None => {}
                 }
             },
             Err(ReadlineError::Interrupted) => {

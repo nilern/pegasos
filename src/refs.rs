@@ -1,7 +1,7 @@
 use std::char;
 use std::collections::hash_map::DefaultHasher;
 use std::convert::{TryFrom, TryInto};
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::mem::{self, size_of, transmute};
@@ -241,15 +241,15 @@ impl Display for Value {
         use UnpackedValue::*;
 
         match self.unpack() {
-            ORef(v) => v.fmt(f),
-            Fixnum(n) => n.fmt(f), // HACK
+            ORef(v) => Display::fmt(&v, f),
+            Fixnum(n) => Display::fmt(&n, f), // HACK
             Flonum(n) => unimplemented!(),
-            Char(c) => c.fmt(f), // HACK
-            Bool(true) => "#true".fmt(f),
-            Bool(false) => "#false".fmt(f),
-            Nil => "()".fmt(f),
-            Unbound => "#<unbound>".fmt(f), // although we should never actually get here
-            Unspecified => "#<unspecified>".fmt(f),
+            Char(c) => Display::fmt(&c, f), // HACK
+            Bool(true) => Display::fmt("#true", f),
+            Bool(false) => Display::fmt("#false", f),
+            Nil => Display::fmt("()", f),
+            Unbound => Display::fmt("#<unbound>", f), // although we should never actually get here
+            Unspecified => Display::fmt("#<unspecified>", f),
             _ => unimplemented!()
         }
     }
@@ -367,6 +367,10 @@ impl<T: Heaped + ?Sized> TryFrom<Value> for HeapValue<T> {
             Err(())
         }
     }
+}
+
+impl<T: Debug> Debug for HeapValue<T> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { (*self).fmt(f) }
 }
 
 impl Display for HeapValue<()> {

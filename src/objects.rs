@@ -379,6 +379,7 @@ impl Display for PgsString {
 
 // ---
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct SymbolData {
     pub hash: u64

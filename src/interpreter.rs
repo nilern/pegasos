@@ -1,13 +1,66 @@
 use std::convert::{TryFrom, TryInto};
+use std::fmt::{self, Display, Formatter};
 use std::mem::transmute;
 
+use super::error::PgsError;
 use super::state::State;
 use super::objects::{UnpackedHeapValue, PgsString, Symbol, Pair, Closure, Code, Vector};
 use super::refs::{Value, UnpackedValue, FrameTag};
 
+#[derive(Debug)]
+pub struct SyntaxError(Value);
+
+impl Display for SyntaxError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Bad syntax: {}", self.0)
+    }
+}
+
+#[derive(Debug)]
+pub enum RuntimeError {
+    Argc {
+        callee: Value,
+        params: (usize, bool),
+        got: usize
+    },
+    Retc {
+        cont_params: (usize, bool),
+        got: usize
+    },
+    Uncallable(Value),
+    Unbound(Symbol)
+}
+
+impl Display for RuntimeError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            RuntimeError::Argc {callee, params: (paramc, variadic), got} => {
+                write!(f, "{} expected ", callee)?;
+                if *variadic {
+                    write!(f, "at least")?;
+                } else {
+                    write!(f, "exactly")?;
+                }
+                write!(f, " {} arguments but was passed {}", paramc, got)
+            },
+            RuntimeError::Retc {cont_params: (paramc, variadic), got} => {
+                write!(f, "expected ")?;
+                if *variadic {
+                    write!(f, "at least")?;
+                } else {
+                    write!(f, "exactly")?;
+                }
+                write!(f, " {} return values but got {}", paramc, got)
+            },
+            RuntimeError::Uncallable(v) => write!(f, "{} cannot be called", v),
+            RuntimeError::Unbound(name) => write!(f, "Unbound variable: {}", name)
+        }
+    }
+}
+
 pub enum Op {Eval, Continue, Apply}
 
-pub fn eval(state: &mut State) -> Result<(), ()> {
+pub fn eval(state: &mut State) -> Result<(), PgsError> {
     let mut op = Op::Eval;
     let expr = state.pop().unwrap();
     state.push_env();
@@ -40,7 +93,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
                                     }
 
-                                    state.raise(())?;
+                                    state.raise(SyntaxError(pair.into()))?;
                                 },
                                 "set!" => {
                                     if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -60,7 +113,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
                                     }
 
-                                    state.raise(())?;
+                                    state.raise(SyntaxError(pair.into()))?;
                                 },
                                 "begin" => {
                                     if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -80,7 +133,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
                                     }
 
-                                    state.raise(())?;
+                                    state.raise(SyntaxError(pair.into()))?;
                                 },
                                 "if" => {
                                     if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -105,7 +158,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
                                     }
 
-                                    state.raise(())?
+                                    state.raise(SyntaxError(pair.into()))?
                                 },
                                 "quote" => {
                                     if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -117,7 +170,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
                                     }
 
-                                    state.raise(())?
+                                    state.raise(SyntaxError(pair.into()))?
                                 },
                                 "let" => {
                                     if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -158,7 +211,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
                                     }
 
-                                    state.raise(())?
+                                    state.raise(SyntaxError(pair.into()))?
                                 },
                                 "lambda" => {
                                     if let Ok(args) = Pair::try_from(pair.cdr) {
@@ -181,7 +234,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                                         params = param_pair.cdr;
                                                         state.push(param);
                                                     } else {
-                                                        state.raise(())?;
+                                                        state.raise(SyntaxError(param_pair.car))?;
                                                     }
                                                 }
 
@@ -193,7 +246,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                                     if let Ok(rest_param) = Symbol::try_from(params) {
                                                         state.push(rest_param);
                                                     } else {
-                                                        state.raise(())?;
+                                                        state.raise(SyntaxError(params))?;
                                                     }
                                                 }
 
@@ -205,7 +258,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
                                     }
 
-                                    state.raise(())?
+                                    state.raise(SyntaxError(pair.into()))?
                                 },
                                 _ => {}
                             }
@@ -233,7 +286,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                 UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1u16);},
                 UnpackedValue::Unspecified => {op = Op::Continue; state.push(1u16);},
                 UnpackedValue::Eof => {op = Op::Continue; state.push(1u16);},
-                UnpackedValue::Nil => state.raise(())?,
+                UnpackedValue::Nil => state.raise(SyntaxError(Value::NIL))?,
                 UnpackedValue::Unbound => unreachable!(),
                 UnpackedValue::FrameTag(_) => unreachable!()
             }
@@ -249,7 +302,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.push(res);
                         break;
                     } else {
-                        state.raise(())?;
+                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
                     },
                     FrameTag::Define => if value_count == 1 {
                         let value = state.pop().unwrap();
@@ -260,7 +313,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.push(Value::UNSPECIFIED);
                         state.push(1u16);
                     } else {
-                        state.raise(())?;
+                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
                     },
                     FrameTag::Set => if value_count == 1 {
                         let value = state.pop().unwrap();
@@ -270,7 +323,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.set()?;
                         state.push(1u16);
                     } else {
-                        state.raise(())?;
+                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
                     },
                     FrameTag::CondBranch => if value_count == 1 {
                         if state.pop().unwrap() != Value::FALSE {
@@ -286,7 +339,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         }
                         op = Op::Eval;
                     } else {
-                        state.raise(())?;
+                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
                     },
                     FrameTag::Let => if value_count == 1 {
                         let value = state.pop().unwrap();
@@ -305,8 +358,8 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         let expr = exprs.car;
 
                                         if exprs.cdr == Value::NIL {
-                                            state.put(3 + i, binder)?;
-                                            state.put(4 + i, bindings.cdr)?;
+                                            state.put(3 + i, binder);
+                                            state.put(4 + i, bindings.cdr);
                                             state.pop(); // frame tag
                                             state.pop(); // env
                                             state.pop(); // i 
@@ -317,13 +370,12 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(FrameTag::Let);
                                             state.push(expr);
                                             op = Op::Eval;
-                                        } else {
-                                            state.raise(())?;
+                                            continue;
                                         }
-                                    } else {
-                                        state.raise(())?;
                                     }
                                 }
+
+                                state.raise(SyntaxError(binding))?;
                             } else if bindings == Value::NIL {
                                 state.pop(); // frame tag
                                 state.pop(); // env
@@ -337,20 +389,20 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                 state.pop(); // bindings
                                 op = Op::Eval;
                             } else {
-                                state.raise(())?;
+                                state.raise(SyntaxError(bindings))?;
                             }
                         } else {
-                            state.raise(())?;
+                            state.raise(SyntaxError(state.get(3 + i).unwrap()))?;
                         }
                     } else {
-                        state.raise(())?;
+                        state.raise(RuntimeError::Retc {cont_params: (1, false), got: value_count})?;
                     },
                     FrameTag::Stmt => {
                         let stmts = state.get(value_count + 2).unwrap();
 
                         if let Ok(stmts) = Pair::try_from(stmts) {
                             for _ in 0..value_count { state.pop(); }
-                            state.put(2, stmts.cdr)?;
+                            state.put(2, stmts.cdr);
                             state.push(stmts.car);
                             op = Op::Eval;
                         } else if stmts == Value::NIL {
@@ -359,7 +411,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             }
                             state.push(Value::try_from(value_count).unwrap());
                         } else {
-                            state.raise(())?;
+                            state.raise(SyntaxError(stmts))?;
                         }
                     },
                     FrameTag::Arg => if value_count == 1 {
@@ -372,7 +424,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             state.pop(); // frame tag
                             state.pop(); // env
                             state.pop(); // i
-                            state.put(i, rargs.cdr)?;
+                            state.put(i, rargs.cdr);
                             state.push(value);
                             state.push(Value::try_from(i + 1).unwrap());
                             state.push_env();
@@ -388,10 +440,10 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             state.remove(i + 2); // rargs
                             op = Op::Apply;
                         } else {
-                            state.raise(())?;
+                            state.raise(SyntaxError(rargs))?;
                         }
                     } else {
-                        state.raise(())?;
+                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
                     }
                 }
             },
@@ -432,7 +484,9 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     state.push(body);
                                     op = Op::Eval;
                                 } else {
-                                    state.raise(())?;
+                                    state.raise(RuntimeError::Argc {callee: callee.into(),
+                                                                    params: (params.len(), rest_param != Value::FALSE),
+                                                                    got: arg_count})?;
                                 }
                             },
                             _ => unreachable!()
@@ -440,7 +494,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         Err(_) => unimplemented!()
                     }
                 } else {
-                    state.raise(())?;
+                    state.raise(RuntimeError::Uncallable(state.get(arg_count + 1).unwrap()))?;
                 }
             }
         }
