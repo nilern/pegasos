@@ -13,33 +13,8 @@ use super::util::fsize;
 
 // ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Value(usize);
-
-impl Value {
-    pub unsafe fn from_data(ptr: *mut u8) -> Self {
-        Self(ptr as usize | BaseTag::ORef as usize)
-    }
-}
-
-impl ObjectReference for Value {
-    type Object = Object;
-
-    unsafe fn from_ptr(ptr: *mut Self::Object) -> Self {
-        Self((*ptr).data() as usize | BaseTag::ORef as usize)
-    }
-
-    fn as_mut_ptr(self) -> Option<*mut Object> {
-        if self.is_oref() {
-            Some(unsafe { ((self.0 & !Self::MASK) as *mut Object).offset(-1) })
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(PartialEq)]
-pub enum BaseTag {
+enum BaseTag {
     ORef = 0b01,
     Fixnum = 0b00, // i30 | i62
     Flonum = 0b10, // f30 | f62
@@ -67,6 +42,42 @@ pub enum UnpackedValue {
     Unbound,
     Unspecified,
     Eof
+}
+
+pub enum UnpackedHeapValue {
+    Vector(Vector),
+    String(PgsString),
+    Symbol(Symbol),
+    Pair(Pair),
+    Bindings(Bindings),
+    Closure(Closure)
+}
+
+// ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Value(usize);
+
+impl Value {
+    pub unsafe fn from_data(ptr: *mut u8) -> Self {
+        Self(ptr as usize | BaseTag::ORef as usize)
+    }
+}
+
+impl ObjectReference for Value {
+    type Object = Object;
+
+    unsafe fn from_ptr(ptr: *mut Self::Object) -> Self {
+        Self((*ptr).data() as usize | BaseTag::ORef as usize)
+    }
+
+    fn as_mut_ptr(self) -> Option<*mut Object> {
+        if self.is_oref() {
+            Some(unsafe { ((self.0 & !Self::MASK) as *mut Object).offset(-1) })
+        } else {
+            None
+        }
+    }
 }
 
 impl Value {
@@ -246,15 +257,6 @@ impl Display for Value {
 pub struct HeapValue<T: ?Sized> {
     pub value: Value,
     pub _phantom: PhantomData<*mut T>
-}
-
-pub enum UnpackedHeapValue {
-    Vector(Vector),
-    String(PgsString),
-    Symbol(Symbol),
-    Pair(Pair),
-    Bindings(Bindings),
-    Closure(Closure)
 }
 
 impl<T: ?Sized> Clone for HeapValue<T> {

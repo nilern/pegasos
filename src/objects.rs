@@ -18,6 +18,59 @@ use super::state::State;
 
 // ---
 
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+pub enum HeapTag {
+    Pair = 0x0,
+    Vector = 0x1,
+    String = 0x2,
+    Symbol = 0x3,
+    Closure = 0x4,
+    Bindings = 0x5
+}
+
+impl HeapTag {
+    const FIRST_REFS: usize = Self::Pair as usize;
+
+    fn is_bytes(self) -> bool { (self as usize) < Self::FIRST_REFS }
+    
+    fn skips(self) -> bool { self == Self::Closure }
+
+    fn align(self) -> usize {
+        if self.is_bytes() {
+            if self == Self::Symbol {
+                align_of::<SymbolData>()
+            } else {
+                align_of::<u8>()
+            }
+        } else {
+            align_of::<Value>()
+        }
+    }
+}
+
+pub trait Heaped {
+    const TAG: HeapTag;
+}
+
+#[repr(usize)]
+pub enum Code {
+    ApplySelf = 0
+}
+
+impl TryFrom<usize> for Code {
+    type Error = ();
+
+    fn try_from(code: usize) -> Result<Self, Self::Error> {
+        if code < 256 { // HACK
+            Ok(unsafe { transmute::<usize, Self>(code) })
+        } else {
+            Err(())
+        }
+    }
+}
+
+// ---
+
 /// Bit 0 (LSB) is always set, for heap parsability (header vs. alignment padding).
 /// Bit 1 is mark (forwarded) bit
 /// Bit 2 is bytes bit
@@ -96,36 +149,6 @@ impl Header {
 pub struct Object {
     identity_hash: usize,
     header: Header
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Hash)]
-pub enum HeapTag {
-    String = 0x0,
-    Symbol = 0x1,
-    Pair = 0x2,
-    Vector = 0x3,
-    Bindings = 0x4,
-    Closure = 0x5
-}
-
-impl HeapTag {
-    const FIRST_REFS: usize = Self::Pair as usize;
-
-    fn is_bytes(self) -> bool { (self as usize) < Self::FIRST_REFS }
-    
-    fn skips(self) -> bool { self == Self::Closure }
-
-    fn align(self) -> usize {
-        if self.is_bytes() {
-            if self == Self::Symbol {
-                align_of::<SymbolData>()
-            } else {
-                align_of::<u8>()
-            }
-        } else {
-            align_of::<Value>()
-        }
-    }
 }
 
 thread_local! {
@@ -216,12 +239,6 @@ impl Iterator for PtrFields {
             None
         }
     }
-}
-
-// ---
-
-pub trait Heaped {
-    const TAG: HeapTag;
 }
 
 // ---
@@ -490,23 +507,6 @@ impl Pair {
 }
 
 // ---
-
-#[repr(usize)]
-pub enum Code {
-    ApplySelf = 0
-}
-
-impl TryFrom<usize> for Code {
-    type Error = ();
-
-    fn try_from(code: usize) -> Result<Self, Self::Error> {
-        if code < 256 { // HACK
-            Ok(unsafe { transmute::<usize, Self>(code) })
-        } else {
-            Err(())
-        }
-    }
-}
 
 #[repr(C)]
 pub struct ClosureData {
