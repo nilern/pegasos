@@ -696,7 +696,7 @@ mod tests {
         let mut vec = Vector::new(&mut state, len).unwrap();
 
         assert_eq!(vec.len(), len);
-        assert_eq!(vec[i], Value::try_from(0isize).unwrap());
+        assert_eq!(vec[i], Value::from(0i16));
 
         vec[i] = Value::from('a');
 
@@ -731,8 +731,8 @@ mod tests {
     #[test]
     fn test_pair() {
         let mut state = State::new(1 << 12, 1 << 20);
-        let a = Value::try_from(5isize).unwrap();
-        let b = Value::try_from(8isize).unwrap();
+        let a = Value::from(5i16);
+        let b = Value::from(8i16);
 
         let p = Pair::cons(&mut state, a, b).unwrap();
 
@@ -744,8 +744,8 @@ mod tests {
     fn test_bindings() {
         let mut state = State::new(1 << 12, 1 << 20);
         let bindings = Bindings::new(&mut state, None).unwrap();
-        let a = Value::try_from(5isize).unwrap();
-        let b = Value::try_from(8isize).unwrap();
+        let a = Value::from(5i16);
+        let b = Value::from(8i16);
         let foo = unsafe {state.push_symbol("foo"); state.pop().unwrap().try_into().unwrap()};
         let bar = unsafe {state.push_symbol("bar"); state.pop().unwrap().try_into().unwrap()};
 
@@ -759,11 +759,11 @@ mod tests {
     #[test]
     fn test_identity_hash() {
         let mut state = State::new(1 << 12, 1 << 20);
-        let a = Value::try_from(5isize).unwrap();
-        let b = Value::try_from(8isize).unwrap();
+        let a = Value::from(5i16);
+        let b = Value::from(8i16);
         let mut p = Pair::new(&mut state).unwrap();
 
-        assert_eq!(a.identity_hash(), Value::try_from(5isize).unwrap().identity_hash());
+        assert_eq!(a.identity_hash(), Value::from(5i16).identity_hash());
 
         let phash = p.identity_hash();
         assert!(phash != 0);

@@ -113,7 +113,7 @@ mod tests {
         let mut state = State::new(1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" 23 ").peekable());
         parser.sexpr(&mut state).unwrap();
-        assert_eq!(state.pop().unwrap(), Value::try_from(23isize).unwrap());
+        assert_eq!(state.pop().unwrap(), Value::from(23i16));
     }
 
     #[test]
@@ -149,7 +149,7 @@ mod tests {
         parser.sexpr(&mut state).unwrap();
         let parsed: Pair = state.pop().unwrap().try_into().unwrap();
 
-        assert_eq!(parsed.car, Value::try_from(5isize).unwrap());
+        assert_eq!(parsed.car, Value::from(5i16));
         assert_eq!(parsed.cdr, Value::NIL);
     }
 
@@ -161,8 +161,8 @@ mod tests {
         parser.sexpr(&mut state).unwrap();
         let parsed: Pair = state.pop().unwrap().try_into().unwrap();
 
-        assert_eq!(parsed.car, Value::try_from(5isize).unwrap());
-        assert_eq!(parsed.cdr, Value::try_from(8isize).unwrap());
+        assert_eq!(parsed.car, Value::from(5i16));
+        assert_eq!(parsed.cdr, Value::from(8i16));
     }
 
     #[test]
@@ -174,7 +174,7 @@ mod tests {
         let parsed: Vector = state.pop().unwrap().try_into().unwrap();
 
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0], Value::try_from(5isize).unwrap());
+        assert_eq!(parsed[0], Value::from(5i16));
     }
 }
 

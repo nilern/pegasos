@@ -139,6 +139,14 @@ impl Value {
     }
 }
 
+impl From<u16> for Value {
+    fn from(n: u16) -> Self { Self((n as usize) << Self::SHIFT | BaseTag::Fixnum as usize) }
+}
+
+impl From<i16> for Value {
+    fn from(n: i16) -> Self { Self((n as usize) << Self::SHIFT | BaseTag::Fixnum as usize) }
+}
+
 impl TryFrom<isize> for Value {
     type Error = (); // FIXME
 
@@ -405,7 +413,7 @@ mod tests {
     fn test_fixnum() {
         let n = 23isize;
 
-        let v = Value::try_from(n).unwrap();
+        let v = Value::from(23i16);
 
         assert!(!v.is_oref());
         assert_eq!(n, v.try_into().unwrap());

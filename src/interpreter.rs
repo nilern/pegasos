@@ -160,7 +160,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                 if args.cdr == Value::NIL {
                                     state.pop();
                                     state.push(args.car);
-                                    {op = Op::Continue; state.push(1usize.try_into().unwrap());};
+                                    {op = Op::Continue; state.push(1u16.into());};
                                 } else {
                                     state.pop();
                                     state.raise(())?
@@ -190,7 +190,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                                         state.push(body);
                                                         state.push(bindings.cdr);
                                                         state.push(binder);
-                                                        state.push(0usize.try_into().unwrap());
+                                                        state.push(0u16.into());
                                                         state.push_env();
                                                         state.push(FrameTag::Let.into());
                                                         state.push(expr);
@@ -264,7 +264,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                         }
 
                                         unsafe { state.closure(Code::ApplySelf as usize, 4); }
-                                        state.push(1usize.try_into().unwrap());
+                                        state.push(1u16.into());
                                         op = Op::Continue;
                                     } else {
                                         state.pop();
@@ -281,7 +281,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             _ => {
                                 state.pop();
                                 state.push(pair.cdr);
-                                state.push(0isize.try_into().unwrap());
+                                state.push(0u16.into());
                                 state.push_env();
                                 state.push(FrameTag::Arg.into());
                                 state.push(pair.car);
@@ -291,27 +291,27 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         // TODO: DRY
                         state.pop();
                         state.push(pair.cdr);
-                        state.push(0isize.try_into().unwrap());
+                        state.push(0u16.into());
                         state.push_env();
                         state.push(FrameTag::Arg.into());
                         state.push(pair.car);
                     },
                     UnpackedHeapValue::Symbol(_) => {
                         state.lookup()?;
-                        state.push(1usize.try_into().unwrap());
+                        state.push(1u16.into());
                         op = Op::Continue;
                     },
-                    UnpackedHeapValue::Vector(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
-                    UnpackedHeapValue::String(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
+                    UnpackedHeapValue::Vector(_) => {op = Op::Continue; state.push(1u16.into());},
+                    UnpackedHeapValue::String(_) => {op = Op::Continue; state.push(1u16.into());},
                     _ => unimplemented!()
                 },
-                UnpackedValue::Fixnum(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
-                UnpackedValue::Flonum(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
-                UnpackedValue::Char(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
-                UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
+                UnpackedValue::Fixnum(_) => {op = Op::Continue; state.push(1u16.into());},
+                UnpackedValue::Flonum(_) => {op = Op::Continue; state.push(1u16.into());},
+                UnpackedValue::Char(_) => {op = Op::Continue; state.push(1u16.into());},
+                UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1u16.into());},
                 UnpackedValue::Unbound => unreachable!(),
-                UnpackedValue::Unspecified => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
-                UnpackedValue::Eof => {op = Op::Continue; state.push(1usize.try_into().unwrap());},
+                UnpackedValue::Unspecified => {op = Op::Continue; state.push(1u16.into());},
+                UnpackedValue::Eof => {op = Op::Continue; state.push(1u16.into());},
                 UnpackedValue::Nil => {state.pop(); state.raise(())?},
             }
 
@@ -336,7 +336,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.push(value);
                         unsafe { state.define(); }
                         state.push(Value::UNSPECIFIED);
-                        state.push(Value::try_from(1isize).unwrap());
+                        state.push(1u16.into());
                     } else {
                         for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
@@ -347,7 +347,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.pop(); // env
                         state.push(value);
                         state.set()?;
-                        state.push(Value::try_from(1isize).unwrap());
+                        state.push(1u16.into());
                     } else {
                         for _ in 0..value_count { state.pop(); }
                         state.raise(())?;
@@ -585,7 +585,7 @@ mod tests {
         let mut parser = Parser::new(Lexer::new("foo").peekable());
         parser.sexpr(&mut state).unwrap();
         eval(&mut state).unwrap();
-        assert_eq!(state.pop().unwrap(), Value::try_from(8isize).unwrap());
+        assert_eq!(state.pop().unwrap(), Value::from(8i16));
     }
 
     #[test]
@@ -614,7 +614,7 @@ mod tests {
         parser.sexpr(&mut state).unwrap();
         eval(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::try_from(23isize).unwrap());
+        assert_eq!(state.pop().unwrap(), Value::from(23i16));
 
         let mut parser = Parser::new(Lexer::new("(begin)").peekable());
 
@@ -631,7 +631,7 @@ mod tests {
         parser.sexpr(&mut state).unwrap();
         eval(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::try_from(42isize).unwrap());
+        assert_eq!(state.pop().unwrap(), Value::from(42i16));
     }
 
     #[test]
@@ -643,7 +643,7 @@ mod tests {
         parser.sexpr(&mut state).unwrap();
         eval(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::try_from(8isize).unwrap());
+        assert_eq!(state.pop().unwrap(), Value::from(8i16));
     }
 
     #[test]
@@ -655,7 +655,7 @@ mod tests {
         parser.sexpr(&mut state).unwrap();
         eval(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::try_from(8isize).unwrap());
+        assert_eq!(state.pop().unwrap(), Value::from(8i16));
     }
 }
 
