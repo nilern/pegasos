@@ -1,5 +1,5 @@
 use std::char;
-use std::collections::hash_map::RandomState;
+use std::collections::hash_map::{DefaultHasher, RandomState};
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
 use std::hash::{Hash, Hasher, BuildHasher};
@@ -8,6 +8,10 @@ use std::mem::{self, size_of, align_of, transmute};
 use std::ops::{Deref, DerefMut};
 use std::slice;
 use std::str;
+use std::cell::UnsafeCell;
+
+use rand::{SeedableRng, Rng};
+use rand::rngs::SmallRng;
 
 use super::util::fsize;
 use super::bindings::Bindings;
@@ -111,6 +115,16 @@ impl Value {
                 Self::UNSPECIFIED => UnpackedValue::Unspecified,
                 _ => unimplemented!()
             }
+        }
+    }
+
+    fn identity_hash(self) -> usize {
+        if let Ok(oref) = HeapValue::<()>::try_from(self) {
+            oref.identity_hash()
+        } else {
+            let mut hasher = DefaultHasher::default();
+            self.0.hash(&mut hasher);
+            hasher.finish() as usize
         }
     }
 }
@@ -306,6 +320,7 @@ impl Header {
 
 #[derive(Clone, Copy)]
 pub struct Object {
+    identity_hash: usize,
     header: Header
 }
 
@@ -339,8 +354,12 @@ impl HeapTag {
     }
 }
 
+thread_local! {
+    static IDENTITY_HASHES: UnsafeCell<SmallRng> = UnsafeCell::new(SmallRng::from_entropy());
+}
+
 impl Object {
-    pub fn new(header: Header) -> Self { Self {header} }
+    pub fn new(header: Header) -> Self { Self {identity_hash: 0, header} }
 
     fn tag(&self) -> HeapTag { self.header.tag() }
 
@@ -349,6 +368,21 @@ impl Object {
     fn skips(&self) -> bool { self.header.skips() }
 
     fn len(&self) -> usize { self.header.len() }
+
+    fn identity_hash(&mut self) -> usize {
+        let mut hash = self.identity_hash;
+
+        if hash != 0 {
+             hash
+        } else {
+            hash = IDENTITY_HASHES.with(|id_hashes| unsafe { (*id_hashes.get()).gen() });
+            if hash == 0 {
+                hash = 0xbad;
+            }
+            self.identity_hash = hash;
+            hash
+        }
+    }
 }
 
 impl HeapObject for Object {
@@ -359,7 +393,7 @@ impl HeapObject for Object {
 
     fn is_alignment_hole(mem: *const Self) -> bool { Header::is_alignment_hole(unsafe{ &(*mem).header }) }
 
-    unsafe fn forwarding(oref: Self::Ref) -> Self { Self {header: Header::forwarding(oref)} }
+    unsafe fn forwarding(oref: Self::Ref) -> Self { Self {identity_hash: 0, header: Header::forwarding(oref)} }
     fn forward(&self) -> Option<Self::Ref> { self.header.forward() }
 
     fn size(&self) -> usize { self.header.size() }
@@ -444,6 +478,8 @@ impl<T: ?Sized> HeapValue<T> {
     }
 
     fn data(self) -> *mut u8 { (self.value.0 & !Value::MASK) as *mut u8 }
+
+    fn identity_hash(self) -> usize { unsafe { (*self.as_ptr()).identity_hash() } }
 }
 
 impl HeapValue<()> {
@@ -957,6 +993,22 @@ mod tests {
 
         assert_eq!(p.car, a);
         assert_eq!(p.cdr, b);
+    }
+
+    #[test]
+    fn test_identity_hash() {
+        let mut state = State::new(1 << 12, 1 << 20);
+        let a = Value::try_from(5isize).unwrap();
+        let b = Value::try_from(8isize).unwrap();
+        let mut p = Pair::new(&mut state).unwrap();
+
+        assert_eq!(a.identity_hash(), Value::try_from(5isize).unwrap().identity_hash());
+
+        let phash = p.identity_hash();
+        assert!(phash != 0);
+        p.car = a;
+        p.cdr = b;
+        assert_eq!(p.identity_hash(), phash);
     }
 }
 
