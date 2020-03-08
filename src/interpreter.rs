@@ -11,7 +11,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
     let mut op = Op::Eval;
     let expr = state.pop().unwrap();
     state.push_env();
-    state.push(FrameTag::Done.into());
+    state.push(FrameTag::Done);
     state.push(expr);
     
     loop {
@@ -28,9 +28,9 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
 
                                         if rargs.cdr == Value::NIL {
                                             state.pop();
-                                            state.push(name.into());
+                                            state.push(name);
                                             state.push_env();
-                                            state.push(FrameTag::Define.into());
+                                            state.push(FrameTag::Define);
                                             state.push(value_expr);
                                         } else {
                                             state.raise(())?;
@@ -51,9 +51,9 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
 
                                         if rargs.cdr == Value::NIL {
                                             state.pop();
-                                            state.push(name.into());
+                                            state.push(name);
                                             state.push_env();
-                                            state.push(FrameTag::Set.into());
+                                            state.push(FrameTag::Set);
                                             state.push(value_expr);
                                         } else {
                                             state.raise(())?;
@@ -77,7 +77,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     state.pop();
                                     state.push(args.cdr);
                                     state.push_env();
-                                    state.push(FrameTag::Stmt.into());
+                                    state.push(FrameTag::Stmt);
                                     state.push(stmt);
                                 }
                             } else {
@@ -97,7 +97,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(succeed);
                                             state.push(fail);
                                             state.push_env();
-                                            state.push(FrameTag::CondBranch.into());
+                                            state.push(FrameTag::CondBranch);
                                             state.push(condition);
                                         } else {
                                             state.raise(())?
@@ -115,7 +115,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                 if args.cdr == Value::NIL {
                                     state.pop();
                                     state.push(args.car);
-                                    {op = Op::Continue; state.push(1u16.into());};
+                                    {op = Op::Continue; state.push(1u16);};
                                 } else {
                                     state.raise(())?
                                 }
@@ -143,9 +143,9 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                                         state.push(body);
                                                         state.push(bindings.cdr);
                                                         state.push(binder);
-                                                        state.push(0u16.into());
+                                                        state.push(0u16);
                                                         state.push_env();
-                                                        state.push(FrameTag::Let.into());
+                                                        state.push(FrameTag::Let);
                                                         state.push(expr);
                                                     } else {
                                                         state.raise(())?
@@ -189,7 +189,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             if let Ok(param) = Symbol::try_from(param_pair.car) {
                                                 arity += 1;
                                                 params = param_pair.cdr;
-                                                state.push(param.into());
+                                                state.push(param);
                                             } else {
                                                 state.raise(())?;
                                             }
@@ -201,14 +201,14 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.push(Value::FALSE);
                                         } else {
                                             if let Ok(rest_param) = Symbol::try_from(params) {
-                                                state.push(rest_param.into());
+                                                state.push(rest_param);
                                             } else {
                                                 state.raise(())?;
                                             }
                                         }
 
                                         unsafe { state.closure(Code::ApplySelf as usize, 4); }
-                                        state.push(1u16.into());
+                                        state.push(1u16);
                                         op = Op::Continue;
                                     } else {
                                         state.raise(())?
@@ -222,9 +222,9 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             _ => {
                                 state.pop();
                                 state.push(pair.cdr);
-                                state.push(0u16.into());
+                                state.push(0u16);
                                 state.push_env();
-                                state.push(FrameTag::Arg.into());
+                                state.push(FrameTag::Arg);
                                 state.push(pair.car);
                             }
                         }
@@ -232,26 +232,26 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         // TODO: DRY
                         state.pop();
                         state.push(pair.cdr);
-                        state.push(0u16.into());
+                        state.push(0u16);
                         state.push_env();
-                        state.push(FrameTag::Arg.into());
+                        state.push(FrameTag::Arg);
                         state.push(pair.car);
                     },
                     UnpackedHeapValue::Symbol(_) => {
                         state.lookup()?;
-                        state.push(1u16.into());
+                        state.push(1u16);
                         op = Op::Continue;
                     },
-                    UnpackedHeapValue::Vector(_) => {op = Op::Continue; state.push(1u16.into());},
-                    UnpackedHeapValue::String(_) => {op = Op::Continue; state.push(1u16.into());},
+                    UnpackedHeapValue::Vector(_) => {op = Op::Continue; state.push(1u16);},
+                    UnpackedHeapValue::String(_) => {op = Op::Continue; state.push(1u16);},
                     _ => unimplemented!()
                 },
-                UnpackedValue::Fixnum(_) => {op = Op::Continue; state.push(1u16.into());},
-                UnpackedValue::Flonum(_) => {op = Op::Continue; state.push(1u16.into());},
-                UnpackedValue::Char(_) => {op = Op::Continue; state.push(1u16.into());},
-                UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1u16.into());},
-                UnpackedValue::Unspecified => {op = Op::Continue; state.push(1u16.into());},
-                UnpackedValue::Eof => {op = Op::Continue; state.push(1u16.into());},
+                UnpackedValue::Fixnum(_) => {op = Op::Continue; state.push(1u16);},
+                UnpackedValue::Flonum(_) => {op = Op::Continue; state.push(1u16);},
+                UnpackedValue::Char(_) => {op = Op::Continue; state.push(1u16);},
+                UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1u16);},
+                UnpackedValue::Unspecified => {op = Op::Continue; state.push(1u16);},
+                UnpackedValue::Eof => {op = Op::Continue; state.push(1u16);},
                 UnpackedValue::Nil => state.raise(())?,
                 UnpackedValue::Unbound => unreachable!(),
                 UnpackedValue::FrameTag(_) => unreachable!()
@@ -277,7 +277,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.push(value);
                         unsafe { state.define(); }
                         state.push(Value::UNSPECIFIED);
-                        state.push(1u16.into());
+                        state.push(1u16);
                     } else {
                         state.raise(())?;
                     },
@@ -287,7 +287,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                         state.pop(); // env
                         state.push(value);
                         state.set()?;
-                        state.push(1u16.into());
+                        state.push(1u16);
                     } else {
                         state.raise(())?;
                     },
@@ -329,11 +329,11 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                             state.pop(); // frame tag
                                             state.pop(); // env
                                             state.pop(); // i 
-                                            state.push(name.into());
+                                            state.push(name);
                                             state.push(value);
-                                            state.push((i + 2).try_into().unwrap());
+                                            state.push(Value::try_from(i + 2).unwrap());
                                             state.push_env();
-                                            state.push(FrameTag::Let.into());
+                                            state.push(FrameTag::Let);
                                             state.push(expr);
                                             op = Op::Eval;
                                         } else {
@@ -347,7 +347,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                 state.pop(); // frame tag
                                 state.pop(); // env
                                 state.pop(); // i
-                                state.push(name.into());
+                                state.push(name);
                                 state.push(value);
                                 unsafe { state.push_scope(); }
                                 // FIXME: It is an error for a <variable> to appear more than once
@@ -376,7 +376,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             for _ in 0..(FrameTag::Stmt.framesize().0 + 1) {
                                 state.remove(value_count);
                             }
-                            state.push(value_count.try_into().unwrap());
+                            state.push(Value::try_from(value_count).unwrap());
                         } else {
                             state.raise(())?;
                         }
@@ -393,9 +393,9 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             state.pop(); // i
                             state.put(i, rargs.cdr)?;
                             state.push(value);
-                            state.push((i + 1).try_into().unwrap());
+                            state.push(Value::try_from(i + 1).unwrap());
                             state.push_env();
-                            state.push(FrameTag::Arg.into());
+                            state.push(FrameTag::Arg);
                             state.push(rargs.car);
                             op = Op::Eval;
                         } else if rargs == Value::NIL {
@@ -403,7 +403,7 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                             state.pop(); // env
                             state.pop(); // i
                             state.push(value);
-                            state.push(i.try_into().unwrap()); // argc for apply
+                            state.push(Value::try_from(i).unwrap()); // argc for apply
                             state.remove(i + 2); // rargs
                             op = Op::Apply;
                         } else {

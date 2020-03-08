@@ -29,9 +29,9 @@ impl State {
         res
     }
 
-    pub fn push(&mut self, v: Value) {
+    pub fn push<T: Into<Value>>(&mut self, v: T) {
         if self.stack.len() < self.stack.capacity() {
-            self.stack.push(v);
+            self.stack.push(v.into());
         } else {
             unimplemented!() // FIXME: Handle stack overflow
         }
@@ -74,7 +74,7 @@ impl State {
             self.collect_garbage();
             PgsString::new(self, s).unwrap()
         });
-        self.push(v.into())
+        self.push(v)
     }
 
     pub unsafe fn push_symbol(&mut self, name: &str) {
@@ -82,7 +82,7 @@ impl State {
             self.collect_garbage();
             Symbol::new(&mut self.heap, &mut self.symbol_table, name).unwrap()
         });
-        self.push(v.into())
+        self.push(v)
     }
 
     pub unsafe fn cons(&mut self) {
@@ -94,7 +94,7 @@ impl State {
         });
         pair.cdr = self.stack.pop().unwrap();
         pair.car = self.stack.pop().unwrap();
-        self.stack.push(pair.into());
+        self.push(pair);
     }
 
     pub unsafe fn vector(&mut self, len: usize) {
@@ -106,7 +106,7 @@ impl State {
         });
         vec.copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
-        self.stack.push(vec.into())
+        self.push(vec)
     }
  
     pub unsafe fn closure(&mut self, code: usize, len: usize) {
@@ -121,7 +121,7 @@ impl State {
         self.stack.push(f.into())
     }
    
-    pub fn push_env(&mut self) { self.push(self.env.into()) }
+    pub fn push_env(&mut self) { self.push(self.env) }
 
     pub fn set_env(&mut self, env: Bindings) { self.env = env }
 
@@ -142,7 +142,7 @@ impl State {
         let value = self.pop().unwrap();
         let name = transmute::<Value, Symbol>(self.pop().unwrap()); // its type was checked before pushing it
         self.env.insert(self, name, value).unwrap_or_else(|_| {
-            self.push(name.into());
+            self.push(name);
             self.push(value);
             self.collect_garbage();
             let value = self.pop().unwrap();
