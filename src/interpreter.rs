@@ -18,20 +18,25 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
         match op {
             Op::Eval => match state.peek().unwrap().unpack() {
                 UnpackedValue::ORef(oref) => match oref.unpack() {
-                    UnpackedHeapValue::Pair(pair) => if let Ok(sym) = Symbol::try_from(pair.car) {
-                        match sym.as_str() {
-                            "define" => if let Ok(args) = Pair::try_from(pair.cdr) {
-                                // FIXME: Fail if not on toplevel
-                                if let Ok(name) = Symbol::try_from(args.car) {
-                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
-                                        let value_expr = rargs.car;
+                    UnpackedHeapValue::Pair(pair) => {
+                        if let Ok(sym) = Symbol::try_from(pair.car) {
+                            match sym.as_str() {
+                                "define" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    // FIXME: Fail if not on toplevel
+                                    if let Ok(name) = Symbol::try_from(args.car) {
+                                        if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                            let value_expr = rargs.car;
 
-                                        if rargs.cdr == Value::NIL {
-                                            state.pop();
-                                            state.push(name);
-                                            state.push_env();
-                                            state.push(FrameTag::Define);
-                                            state.push(value_expr);
+                                            if rargs.cdr == Value::NIL {
+                                                state.pop();
+                                                state.push(name);
+                                                state.push_env();
+                                                state.push(FrameTag::Define);
+                                                state.push(value_expr);
+                                                continue;
+                                            } else {
+                                                state.raise(())?;
+                                            }
                                         } else {
                                             state.raise(())?;
                                         }
@@ -40,21 +45,22 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     }
                                 } else {
                                     state.raise(())?;
-                                }
-                            } else {
-                                state.raise(())?;
-                            },
-                            "set!" => if let Ok(args) = Pair::try_from(pair.cdr) {
-                                if let Ok(name) = Symbol::try_from(args.car) {
-                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
-                                        let value_expr = rargs.car;
+                                },
+                                "set!" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    if let Ok(name) = Symbol::try_from(args.car) {
+                                        if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                            let value_expr = rargs.car;
 
-                                        if rargs.cdr == Value::NIL {
-                                            state.pop();
-                                            state.push(name);
-                                            state.push_env();
-                                            state.push(FrameTag::Set);
-                                            state.push(value_expr);
+                                            if rargs.cdr == Value::NIL {
+                                                state.pop();
+                                                state.push(name);
+                                                state.push_env();
+                                                state.push(FrameTag::Set);
+                                                state.push(value_expr);
+                                                continue;
+                                            } else {
+                                                state.raise(())?;
+                                            }
                                         } else {
                                             state.raise(())?;
                                         }
@@ -63,42 +69,45 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     }
                                 } else {
                                     state.raise(())?;
-                                }
-                            } else {
-                                state.raise(())?;
-                            },
-                            "begin" => if let Ok(args) = Pair::try_from(pair.cdr) {
-                                let stmt = args.car;
+                                },
+                                "begin" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    let stmt = args.car;
 
-                                if args.cdr == Value::NIL {
-                                    state.pop();
-                                    state.push(stmt);
+                                    if args.cdr == Value::NIL {
+                                        state.pop();
+                                        state.push(stmt);
+                                        continue;
+                                    } else {
+                                        state.pop();
+                                        state.push(args.cdr);
+                                        state.push_env();
+                                        state.push(FrameTag::Stmt);
+                                        state.push(stmt);
+                                        continue;
+                                    }
                                 } else {
-                                    state.pop();
-                                    state.push(args.cdr);
-                                    state.push_env();
-                                    state.push(FrameTag::Stmt);
-                                    state.push(stmt);
-                                }
-                            } else {
-                                state.raise(())?;
-                            },
-                            "if" => if let Ok(args) = Pair::try_from(pair.cdr) {
-                                let condition = args.car;
+                                    state.raise(())?;
+                                },
+                                "if" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    let condition = args.car;
 
-                                if let Ok(branches) = Pair::try_from(args.cdr) {
-                                    let succeed = branches.car;
+                                    if let Ok(branches) = Pair::try_from(args.cdr) {
+                                        let succeed = branches.car;
 
-                                    if let Ok(rargs) = Pair::try_from(branches.cdr) {
-                                        let fail = rargs.car;
+                                        if let Ok(rargs) = Pair::try_from(branches.cdr) {
+                                            let fail = rargs.car;
 
-                                        if rargs.cdr == Value::NIL {
-                                            state.pop();
-                                            state.push(succeed);
-                                            state.push(fail);
-                                            state.push_env();
-                                            state.push(FrameTag::CondBranch);
-                                            state.push(condition);
+                                            if rargs.cdr == Value::NIL {
+                                                state.pop();
+                                                state.push(succeed);
+                                                state.push(fail);
+                                                state.push_env();
+                                                state.push(FrameTag::CondBranch);
+                                                state.push(condition);
+                                                continue;
+                                            } else {
+                                                state.raise(())?
+                                            }
                                         } else {
                                             state.raise(())?
                                         }
@@ -107,58 +116,61 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     }
                                 } else {
                                     state.raise(())?
-                                }
-                            } else {
-                                state.raise(())?
-                            },
-                            "quote" => if let Ok(args) = Pair::try_from(pair.cdr) {
-                                if args.cdr == Value::NIL {
-                                    state.pop();
-                                    state.push(args.car);
-                                    {op = Op::Continue; state.push(1u16);};
+                                },
+                                "quote" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    if args.cdr == Value::NIL {
+                                        state.pop();
+                                        state.push(args.car);
+                                        {op = Op::Continue; state.push(1u16);};
+                                        continue;
+                                    } else {
+                                        state.raise(())?
+                                    }
                                 } else {
                                     state.raise(())?
-                                }
-                            } else {
-                                state.raise(())?
-                            },
-                            "let" => if let Ok(args) = Pair::try_from(pair.cdr) {
-                                let bindings = args.car;
+                                },
+                                "let" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    let bindings = args.car;
 
-                                if let Ok(rargs) = Pair::try_from(args.cdr) {
-                                    let body = rargs.car;
+                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                        let body = rargs.car;
 
-                                    if rargs.cdr == Value::NIL {
-                                        if let Ok(bindings) = Pair::try_from(bindings) {
-                                            let binding = bindings.car;
+                                        if rargs.cdr == Value::NIL {
+                                            if let Ok(bindings) = Pair::try_from(bindings) {
+                                                let binding = bindings.car;
 
-                                            if let Ok(binding) = Pair::try_from(binding) {
-                                                let binder = binding.car;
+                                                if let Ok(binding) = Pair::try_from(binding) {
+                                                    let binder = binding.car;
 
-                                                if let Ok(exprs) = Pair::try_from(binding.cdr) {
-                                                    let expr = exprs.car;
+                                                    if let Ok(exprs) = Pair::try_from(binding.cdr) {
+                                                        let expr = exprs.car;
 
-                                                    if exprs.cdr == Value::NIL {
-                                                        state.pop();
-                                                        state.push(body);
-                                                        state.push(bindings.cdr);
-                                                        state.push(binder);
-                                                        state.push(0u16);
-                                                        state.push_env();
-                                                        state.push(FrameTag::Let);
-                                                        state.push(expr);
+                                                        if exprs.cdr == Value::NIL {
+                                                            state.pop();
+                                                            state.push(body);
+                                                            state.push(bindings.cdr);
+                                                            state.push(binder);
+                                                            state.push(0u16);
+                                                            state.push_env();
+                                                            state.push(FrameTag::Let);
+                                                            state.push(expr);
+                                                            continue;
+                                                        } else {
+                                                            state.raise(())?
+                                                        }
                                                     } else {
                                                         state.raise(())?
                                                     }
                                                 } else {
                                                     state.raise(())?
                                                 }
+                                            } else if bindings == Value::NIL {
+                                                state.pop();
+                                                state.push(body);
+                                                continue;
                                             } else {
                                                 state.raise(())?
                                             }
-                                        } else if bindings == Value::NIL {
-                                            state.pop();
-                                            state.push(body);
                                         } else {
                                             state.raise(())?
                                         }
@@ -167,69 +179,60 @@ pub fn eval(state: &mut State) -> Result<(), ()> {
                                     }
                                 } else {
                                     state.raise(())?
-                                }
-                            } else {
-                                state.raise(())?
-                            },
-                            "lambda" => if let Ok(args) = Pair::try_from(pair.cdr) {
-                                let params = args.car;
+                                },
+                                "lambda" => if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    let params = args.car;
 
-                                if let Ok(rargs) = Pair::try_from(args.cdr) {
-                                    let body = rargs.car;
+                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                        let body = rargs.car;
 
-                                    if rargs.cdr == Value::NIL {
-                                        state.pop();
-                                        state.push_env();
-                                        state.push(body);
+                                        if rargs.cdr == Value::NIL {
+                                            state.pop();
+                                            state.push_env();
+                                            state.push(body);
 
-                                        let mut params = params;
-                                        let mut arity = 0;
+                                            let mut params = params;
+                                            let mut arity = 0;
 
-                                        while let Ok(param_pair) = Pair::try_from(params) {
-                                            if let Ok(param) = Symbol::try_from(param_pair.car) {
-                                                arity += 1;
-                                                params = param_pair.cdr;
-                                                state.push(param);
-                                            } else {
-                                                state.raise(())?;
+                                            while let Ok(param_pair) = Pair::try_from(params) {
+                                                if let Ok(param) = Symbol::try_from(param_pair.car) {
+                                                    arity += 1;
+                                                    params = param_pair.cdr;
+                                                    state.push(param);
+                                                } else {
+                                                    state.raise(())?;
+                                                }
                                             }
-                                        }
 
-                                        unsafe { state.vector(arity); }
+                                            unsafe { state.vector(arity); }
 
-                                        if params == Value::NIL {
-                                            state.push(Value::FALSE);
+                                            if params == Value::NIL {
+                                                state.push(Value::FALSE);
+                                            } else {
+                                                if let Ok(rest_param) = Symbol::try_from(params) {
+                                                    state.push(rest_param);
+                                                } else {
+                                                    state.raise(())?;
+                                                }
+                                            }
+
+                                            unsafe { state.closure(Code::ApplySelf as usize, 4); }
+                                            state.push(1u16);
+                                            op = Op::Continue;
+                                            continue;
                                         } else {
-                                            if let Ok(rest_param) = Symbol::try_from(params) {
-                                                state.push(rest_param);
-                                            } else {
-                                                state.raise(())?;
-                                            }
+                                            state.raise(())?
                                         }
-
-                                        unsafe { state.closure(Code::ApplySelf as usize, 4); }
-                                        state.push(1u16);
-                                        op = Op::Continue;
                                     } else {
                                         state.raise(())?
                                     }
                                 } else {
                                     state.raise(())?
-                                }
-                            } else {
-                                state.raise(())?
-                            },
-                            _ => {
-                                state.pop();
-                                state.push(pair.cdr);
-                                state.push(0u16);
-                                state.push_env();
-                                state.push(FrameTag::Arg);
-                                state.push(pair.car);
+                                },
+                                _ => {}
                             }
                         }
-                    } else {
-                        // TODO: DRY
+
                         state.pop();
                         state.push(pair.cdr);
                         state.push(0u16);
