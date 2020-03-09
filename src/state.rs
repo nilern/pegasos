@@ -60,8 +60,13 @@ impl State {
         self.stack[i] = v;
     }
 
-    pub fn remove(&mut self, i: usize) {
-        self.stack.len().checked_sub(1 + i).map(|i| self.stack.remove(i)).unwrap();
+    pub fn insert_after(&mut self, i: usize, v: Value) {
+        let i = self.stack.len().checked_sub(i).unwrap();
+        self.stack.insert(i, v)
+    }
+
+    pub fn remove(&mut self, i: usize) -> Option<Value> {
+        self.stack.len().checked_sub(1 + i).map(|i| self.stack.remove(i))
     }
 
     pub fn alloc<T: ?Sized>(&mut self, base: Object) -> Option<HeapValue<T>> {

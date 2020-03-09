@@ -165,7 +165,8 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                         if args.cdr == Value::NIL {
                                             state.pop();
                                             state.push(args.car);
-                                            {op = Op::Continue; state.push(1u16);};
+                                            state.push(1u16);
+                                            op = Op::Continue;
                                             continue;
                                         }
                                     }
@@ -238,19 +239,20 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                                     }
                                                 }
 
-                                                unsafe { state.vector(arity); }
-
                                                 if params == Value::NIL {
-                                                    state.push(Value::FALSE);
+                                                    state.insert_after(arity, params);
                                                 } else {
-                                                    if let Ok(rest_param) = Symbol::try_from(params) {
-                                                        state.push(rest_param);
+                                                    if let Ok(_) = Symbol::try_from(params) {
+                                                        state.insert_after(arity, params);
                                                     } else {
                                                         state.raise(SyntaxError(params))?;
                                                     }
                                                 }
 
-                                                unsafe { state.closure(Code::ApplySelf as usize, 4); }
+                                                unsafe {
+                                                    state.vector(arity);
+                                                    state.closure(Code::ApplySelf as usize, 4);
+                                                }
                                                 state.push(1u16);
                                                 op = Op::Continue;
                                                 continue;
@@ -453,39 +455,47 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                 if let Ok(callee) = Closure::try_from(state.get(arg_count + 1).unwrap()) {
                     match Code::try_from(callee.code) {
                         Ok(Code::ApplySelf) => match callee.clovers() {
-                            &[env, body, params, rest_param] => {
+                            &[env, body, rest_param, params] => {
                                 let params: Vector = params.try_into().unwrap();
+                                let fixed_argc = params.len();
+                                let variadic = rest_param != Value::NIL;
 
-                                if arg_count == params.len()
-                                   || rest_param != Value::FALSE && arg_count >= params.len()
-                                {
+                                if arg_count == fixed_argc || variadic && arg_count >= fixed_argc { // OPTIMIZE?
                                     // FIXME: It is an error for a <variable> to appear more than once
+                                    let leftover_argc = arg_count - fixed_argc;
+
                                     state.pop(); // argc
+                                    state.remove(arg_count); // callee
+                                    state.insert_after(arg_count, body);
+                                    state.insert_after(arg_count, params.into());
+                                    state.insert_after(arg_count, rest_param);
+
                                     state.set_env(env.try_into().unwrap());
                                     unsafe { state.push_scope(); }
 
-                                    if rest_param != Value::FALSE {
+                                    if variadic {
                                         state.push(Value::NIL);
-                                        for _ in 0..arg_count - params.len() {
+                                        for _ in 0..leftover_argc {
                                             unsafe { state.cons(); }
                                         }
-                                        state.push(rest_param);
-                                        state.swap();
+                                        let rest_param = state.get(fixed_argc + 1).unwrap();
+                                        state.insert_after(1, rest_param);
                                         unsafe { state.define(); }
                                     }
 
-                                    for &param in params.iter().rev() {
-                                        state.push(param);
-                                        state.swap();
+                                    for ri in 0..fixed_argc {
+                                        let i = fixed_argc - 1 - ri;
+                                        let params = unsafe { transmute::<Value, Vector>(state.get(i + 2).unwrap()) };
+                                        state.insert_after(1, params[i]);
                                         unsafe { state.define(); }
                                     }
 
-                                    state.pop(); // callee
-                                    state.push(body);
+                                    state.pop(); // rest_param
+                                    state.pop(); // params
                                     op = Op::Eval;
                                 } else {
                                     state.raise(RuntimeError::Argc {callee: callee.into(),
-                                                                    params: (params.len(), rest_param != Value::FALSE),
+                                                                    params: (fixed_argc, variadic),
                                                                     got: arg_count})?;
                                 }
                             },
