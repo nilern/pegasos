@@ -302,6 +302,10 @@ impl<T: ?Sized> Clone for HeapValue<T> {
 
 impl<T: ?Sized> Copy for HeapValue<T> {}
 
+impl<T> PartialEq for HeapValue<T> {
+    fn eq(&self, other: &Self) -> bool { self.value.eq(&other.value) }
+}
+
 impl<T: ?Sized> HeapValue<T> {
     pub fn heap_tag(self) -> HeapTag { unsafe { (*self.as_ptr()).tag() } }
 
@@ -370,7 +374,7 @@ impl<T: Heaped + ?Sized> TryFrom<Value> for HeapValue<T> {
 }
 
 impl<T: Debug> Debug for HeapValue<T> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result { (*self).fmt(f) }
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { <T as Debug>::fmt(&*self, f) }
 }
 
 impl Display for HeapValue<()> {

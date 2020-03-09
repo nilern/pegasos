@@ -540,18 +540,18 @@ mod tests {
     fn test_variables() {
         let mut state = State::new(1 << 12, 1 << 20);
 
-        let mut parser = Parser::new(Lexer::new("(define foo 5)").peekable());
-        parser.sexpr(&mut state).unwrap();
+        let mut parser = Parser::new(Lexer::new("(define foo 5)".chars()));
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
         assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
 
-        let mut parser = Parser::new(Lexer::new("(set! foo 8)").peekable());
-        parser.sexpr(&mut state).unwrap();
+        let mut parser = Parser::new(Lexer::new("(set! foo 8)".chars()));
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
         assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
 
-        let mut parser = Parser::new(Lexer::new("foo").peekable());
-        parser.sexpr(&mut state).unwrap();
+        let mut parser = Parser::new(Lexer::new("foo".chars()));
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
         assert_eq!(state.pop().unwrap(), Value::from(8i16));
     }
@@ -560,16 +560,16 @@ mod tests {
     fn test_quote() {
         let mut state = State::new(1 << 12, 1 << 20);
 
-        let mut parser = Parser::new(Lexer::new("'()").peekable());
+        let mut parser = Parser::new(Lexer::new("'()".chars()));
 
-        parser.sexpr(&mut state).unwrap();
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::NIL);
 
-        let mut parser = Parser::new(Lexer::new("(quote () ())").peekable());
+        let mut parser = Parser::new(Lexer::new("(quote () ())".chars()));
 
-        parser.sexpr(&mut state).unwrap();
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         assert!(eval(&mut state).is_err());
     }
 
@@ -577,16 +577,16 @@ mod tests {
     fn test_begin() {
         let mut state = State::new(1 << 12, 1 << 20);
 
-        let mut parser = Parser::new(Lexer::new("(begin 42 23)").peekable());
+        let mut parser = Parser::new(Lexer::new("(begin 42 23)".chars()));
 
-        parser.sexpr(&mut state).unwrap();
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(23i16));
 
-        let mut parser = Parser::new(Lexer::new("(begin)").peekable());
+        let mut parser = Parser::new(Lexer::new("(begin)".chars()));
 
-        parser.sexpr(&mut state).unwrap();
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         assert!(eval(&mut state).is_err());
     }
 
@@ -594,9 +594,9 @@ mod tests {
     fn test_if() {
         let mut state = State::new(1 << 12, 1 << 20);
 
-        let mut parser = Parser::new(Lexer::new("(if #t 42 23)").peekable());
+        let mut parser = Parser::new(Lexer::new("(if #t 42 23)".chars()));
 
-        parser.sexpr(&mut state).unwrap();
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(42i16));
@@ -606,9 +606,9 @@ mod tests {
     fn test_let() {
         let mut state = State::new(1 << 12, 1 << 20);
 
-        let mut parser = Parser::new(Lexer::new("(let ((a (if #f 5 8)) (b #f)) (if b 42 a))").peekable());
+        let mut parser = Parser::new(Lexer::new("(let ((a (if #f 5 8)) (b #f)) (if b 42 a))".chars()));
 
-        parser.sexpr(&mut state).unwrap();
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(8i16));
@@ -618,9 +618,9 @@ mod tests {
     fn test_lambda() {
         let mut state = State::new(1 << 12, 1 << 20);
 
-        let mut parser = Parser::new(Lexer::new("((lambda (a b) b) 5 8)").peekable());
+        let mut parser = Parser::new(Lexer::new("((lambda (a b) b) 5 8)".chars()));
  
-        parser.sexpr(&mut state).unwrap();
+        unsafe { parser.sexpr(&mut state).unwrap(); }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(8i16));

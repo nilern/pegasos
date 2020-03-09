@@ -4,25 +4,25 @@ use super::parser;
 use super::interpreter::{SyntaxError, RuntimeError};
 
 #[derive(Debug)]
-pub enum PgsError<'a> {
-    Parse(parser::Error<'a>),
+pub enum PgsError {
+    Parse(parser::Error),
     Syntax(SyntaxError),
     Runtime(RuntimeError)
 }
 
-impl<'a> From<parser::Error<'a>> for PgsError<'a> {
-    fn from(err: parser::Error<'a>) -> Self { PgsError::Parse(err) }
+impl From<parser::Error> for PgsError {
+    fn from(err: parser::Error) -> Self { PgsError::Parse(err) }
 }
 
-impl<'a> From<SyntaxError> for PgsError<'a> {
+impl From<SyntaxError> for PgsError {
     fn from(err: SyntaxError) -> Self { PgsError::Syntax(err) }
 }
 
-impl<'a> From<RuntimeError> for PgsError<'a> {
+impl From<RuntimeError> for PgsError {
     fn from(err: RuntimeError) -> Self { PgsError::Runtime(err) }
 }
 
-impl<'a> Display for PgsError<'a> {
+impl Display for PgsError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             PgsError::Parse(parse_err) => write!(f, "Parse error: {}", parse_err),

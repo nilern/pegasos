@@ -1,8 +1,10 @@
 use std::convert::TryFrom;
 use std::fmt::{self, Display, Formatter};
-use std::str::Chars;
+use std::iter::Peekable;
 
 use super::refs::Value;
+use super::objects::Symbol;
+use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Error;
@@ -13,16 +15,16 @@ impl Display for Error {
 
 // ---
 
-#[derive(Debug, PartialEq)]
-pub enum Token<'a> {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Token {
     LParen, RParen, OpenVector,
     Dot,
     Quote,
-    Identifier(&'a str),
+    Identifier(Symbol),
     Const(Value)
 }
 
-impl<'a> Display for Token<'a> {
+impl Display for Token {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Token::LParen => write!(f, "("),
@@ -48,16 +50,18 @@ enum Radix {
 
 // ---
 
-pub struct Lexer<'a> {
-    chars: Chars<'a>
+pub struct Lexer<I: Iterator<Item=char>> {
+    head: Option<Result<Token, Error>>,
+    chars: Peekable<I>,
+    buf: String
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(chars: &'a str) -> Self { Self {chars: chars.chars()} }
+impl<I: Iterator<Item=char>> Lexer<I> {
+    pub fn new(chars: I) -> Self { Self {head: None, chars: chars.peekable(), buf: String::new()} }
 
-    fn peek(&self) -> Option<char> { self.chars.as_str().chars().next() }
+    fn peek_char(&mut self) -> Option<char> { self.chars.peek().map(|&c| c) }
 
-    fn boolean(&mut self) -> Result<Token<'a>, Error> {
+    fn boolean(&mut self) -> Result<Token, Error> {
         match self.chars.next() {
             Some('t') => return Ok(Token::Const(Value::TRUE)),
             Some('f') => return Ok(Token::Const(Value::FALSE)),
@@ -65,11 +69,11 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn number(&mut self, radix: Radix) -> Result<Token<'a>, Error> {
+    fn number(&mut self, radix: Radix) -> Result<Token, Error> {
         let mut res: Option<isize> = None;
 
         loop {
-            match self.peek() {
+            match self.peek_char() {
                 Some(c) if c.is_digit(radix as u32) => {
                     let _ = self.chars.next();
                     let m = c.to_digit(radix as u32).unwrap() as isize;
@@ -86,65 +90,76 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn identifier(&mut self) -> Result<Token<'a>, Error> {
-        let cs = self.chars.as_str();
-        let mut len = 0;
+    unsafe fn identifier(&mut self, state: &mut State) -> Result<Token, Error> {
+        self.buf.clear();
 
         loop {
-            match self.peek() {
+            match self.peek_char() {
                 Some(c) if c.is_alphabetic() || c == '!' => {
                     let _ = self.chars.next();
-                    len += 1;
+                    self.buf.push(c);
                 },
-                _ => return Ok(Token::Identifier(&cs[0..len]))
+                _ => return Ok(Token::Identifier(Symbol::new(state, &self.buf).unwrap_or_else(|| {
+                    state.collect_garbage();
+                    Symbol::new(state, &self.buf).unwrap()
+                })))
             }
         }
     }
-}
 
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Token<'a>, Error>;
+    pub unsafe fn peek(&mut self, state: &mut State) -> Option<Result<Token, Error>> {
+        if self.head.is_none() {
+            self.head = self.next(state);
+        }
 
-    fn next(&mut self) -> Option<Self::Item> {
+        self.head
+    }
+
+    pub unsafe fn next(&mut self, state: &mut State) -> Option<Result<Token, Error>> {
         use Token::*;
 
-        loop {
-            match self.peek() {
-                Some(c) if c.is_whitespace() => {
-                    let _ = self.chars.next();
-                },
-                Some('(') => {
-                    let _ = self.chars.next();
-                    return Some(Ok(LParen));
-                },
-                Some(')') => {
-                    let _ = self.chars.next();
-                    return Some(Ok(RParen));
-                },
-                Some('.') => {
-                    let _ = self.chars.next();
-                    return Some(Ok(Dot));
-                },
-                Some('\'') => {
-                    let _ = self.chars.next();
-                    return Some(Ok(Quote));
-                },
-                Some('#') => {
-                    let _ = self.chars.next();
-                    match self.peek() {
-                        Some('t') => return Some(self.boolean()),
-                        Some('f') => return Some(self.boolean()),
-                        Some('(') => {
-                            let _ = self.chars.next();
-                            return Some(Ok(OpenVector));
+        let head = self.head.take();
+        if head.is_some() {
+            head
+        } else {
+            loop {
+                match self.peek_char() {
+                    Some(c) if c.is_whitespace() => {
+                        let _ = self.chars.next();
+                    },
+                    Some('(') => {
+                        let _ = self.chars.next();
+                        return Some(Ok(LParen));
+                    },
+                    Some(')') => {
+                        let _ = self.chars.next();
+                        return Some(Ok(RParen));
+                    },
+                    Some('.') => {
+                        let _ = self.chars.next();
+                        return Some(Ok(Dot));
+                    },
+                    Some('\'') => {
+                        let _ = self.chars.next();
+                        return Some(Ok(Quote));
+                    },
+                    Some('#') => {
+                        let _ = self.chars.next();
+                        match self.peek_char() {
+                            Some('t') => return Some(self.boolean()),
+                            Some('f') => return Some(self.boolean()),
+                            Some('(') => {
+                                let _ = self.chars.next();
+                                return Some(Ok(OpenVector));
+                            }
+                            _ => unimplemented!()
                         }
-                        _ => unimplemented!()
-                    }
-                },
-                Some(c) if c.is_digit(10) => return Some(self.number(Radix::Decimal)),
-                Some(c) if c.is_alphabetic() || c == '!' => return Some(self.identifier()),
-                None => return None,
-                _ => unimplemented!()
+                    },
+                    Some(c) if c.is_digit(10) => return Some(self.number(Radix::Decimal)),
+                    Some(c) if c.is_alphabetic() || c == '!' => return Some(self.identifier(state)),
+                    None => return None,
+                    _ => unimplemented!()
+                }
             }
         }
     }
@@ -158,9 +173,19 @@ mod tests {
     fn test_lexer() {
         use Token::*;
 
+        let mut state = State::new(1 << 12, 1 << 20);
+        let foo: Symbol = Symbol::new(&mut state, "foo").unwrap();
+
         let input = "  (23 #f foo)  ";
-        let chars: Vec<Token> = Lexer::new(&input).map(Result::unwrap).collect();
-        assert_eq!(chars, vec![LParen, Const(23i16.into()), Const(Value::FALSE), Identifier("foo"), RParen]);
+        let mut lexer = Lexer::new(input.chars());
+
+        let mut tokens = Vec::new();
+
+        while let Some(tok) = unsafe { lexer.next(&mut state) } {
+            tokens.push(tok.unwrap());
+        }
+
+        assert_eq!(tokens, vec![LParen, Const(23i16.into()), Const(Value::FALSE), Identifier(foo), RParen]);
     }
 }
 

@@ -77,9 +77,9 @@ impl State {
     }
 
     pub unsafe fn push_symbol(&mut self, name: &str) {
-        let v = Symbol::new(&mut self.heap, &mut self.symbol_table, name).unwrap_or_else(|| {
+        let v = Symbol::new(self, name).unwrap_or_else(|| {
             self.collect_garbage();
-            Symbol::new(&mut self.heap, &mut self.symbol_table, name).unwrap()
+            Symbol::new(self, name).unwrap()
         });
         self.push(v)
     }
@@ -119,6 +119,10 @@ impl State {
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(f.into())
     }
+
+    pub fn get_symbol(&mut self, name: &str) -> Option<Symbol> {
+        self.symbol_table.get(&mut self.heap, name)
+    }
    
     pub fn push_env(&mut self) { self.push(self.env) }
 
@@ -157,7 +161,7 @@ impl State {
         Ok(self.stack.push(Value::UNSPECIFIED))
     }
 
-    pub fn raise<'a, T, E: Into<PgsError<'a>>>(&mut self, err: E) -> Result<T, PgsError<'a>> {
+    pub fn raise<'a, T, E: Into<PgsError>>(&mut self, err: E) -> Result<T, PgsError> {
         // TODO: Actually try raising Scheme exception.
         Err(err.into())
     }
@@ -200,7 +204,7 @@ impl State {
         Ok(())
     }
 
-    unsafe fn stack_frames<'a>(&'a self) -> Frames<'a> {
+    unsafe fn stack_frames(&self) -> Frames {
         Frames {
             stack: &self.stack,
             index: self.stack.len() - 1,

@@ -1,5 +1,5 @@
 use std::collections::hash_map::RandomState;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::fmt::{self, Display, Formatter};
 use std::hash::{Hash, Hasher, BuildHasher};
 use std::io;
@@ -392,8 +392,8 @@ impl Heaped for SymbolData {
 pub type Symbol = HeapValue<SymbolData>;
 
 impl Symbol {
-    pub fn new(heap: &mut MemoryManager<Object>, symbols: &mut SymbolTable, name: &str) -> Option<Self> {
-        symbols.get(heap, name)
+    pub fn new(state: &mut State, name: &str) -> Option<Self> {
+        state.get_symbol(name)
     }
 
     fn create(heap: &mut MemoryManager<Object>, hash: u64, name: &str) -> Option<Self> {
@@ -744,6 +744,8 @@ impl Bindings {
 mod tests {
     use super::*;
 
+    use std::convert::TryInto;
+
     #[test]
     fn test_vector() {
         let mut state = State::new(1 << 12, 1 << 20);
@@ -772,16 +774,15 @@ mod tests {
 
     #[test]
     fn test_symbol() {
-        let mut heap = MemoryManager::new(1 << 12, 1 << 20);
-        let mut symbols = SymbolTable::new();
+        let mut state = State::new(1 << 12, 1 << 20);
         let name = "foo";
-        let hash = symbols.hash_key(name);
 
-        let s = Symbol::new(&mut heap, &mut symbols, name).unwrap();
-        let t = Symbol::new(&mut heap, &mut symbols, name).unwrap();
+        let s = Symbol::new(&mut state, name).unwrap();
+        let t = Symbol::new(&mut state, name).unwrap();
        
-        assert_eq!(s.hash, hash);
         assert_eq!(s.as_str(), name);
+        assert!(s.hash != 0);
+        assert_eq!(s.hash, t.hash);
         assert_eq!(Value::from(s), Value::from(t));
     }
 
