@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_const() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         
         state.push(Value::from('a'));
         eval(&mut state).unwrap();
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_nil() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         
         state.push(Value::NIL);
         let res = eval(&mut state);
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_variables() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(define foo 5)".chars()));
         unsafe { parser.sexpr(&mut state).unwrap(); }
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_quote() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("'()".chars()));
 
@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn test_begin() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(begin 42 23)".chars()));
 
@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     fn test_if() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(if #t 42 23)".chars()));
 
@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn test_let() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(let ((a (if #f 5 8)) (b #f)) (if b 42 a))".chars()));
 
@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn test_lambda() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("((lambda (a b) b) 5 8)".chars()));
  

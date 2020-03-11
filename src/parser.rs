@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_const() {
-        let mut state = State::new(1 << 16, 1 << 20);
+        let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" 23 ".chars()));
         unsafe { parser.sexpr(&mut state).unwrap(); }
         assert_eq!(state.pop().unwrap(), Value::from(23i16));
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_symbol() {
-        let mut state = State::new(1 << 16, 1 << 20);
+        let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" foo ".chars()));
         unsafe { state.push_symbol("foo"); }
         let symbol: Symbol = state.pop().unwrap().try_into().unwrap();
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_nil() {
-        let mut state = State::new(1 << 16, 1 << 20);
+        let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" () ".chars()));
 
         unsafe { parser.sexpr(&mut state).unwrap(); }
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_proper() {
-        let mut state = State::new(1 << 16, 1 << 20);
+        let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5) ".chars()));
 
         unsafe { parser.sexpr(&mut state).unwrap(); }
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_improper() {
-        let mut state = State::new(1 << 16, 1 << 20);
+        let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5 . 8) ".chars()));
 
         unsafe { parser.sexpr(&mut state).unwrap(); }
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(1 << 16, 1 << 20);
+        let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" #(5) ".chars()));
 
         unsafe { parser.sexpr(&mut state).unwrap(); }

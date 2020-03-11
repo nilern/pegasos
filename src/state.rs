@@ -22,7 +22,7 @@ impl State {
     const STACK_SIZE: usize = 1 << 12; // 4 kiB
     const STACK_LEN: usize = Self::STACK_SIZE / size_of::<Value>();
 
-    pub fn new(initial_heap: usize, max_heap: usize) -> Self {
+    pub fn new(path: &[PathBuf], initial_heap: usize, max_heap: usize) -> Self {
         let mut res = Self {
             heap: MemoryManager::new(initial_heap, max_heap),
             symbol_table: SymbolTable::new(),
@@ -30,6 +30,19 @@ impl State {
             env: unsafe { transmute(Value::UNBOUND) } // HACK
         };
         res.env = Bindings::new(&mut res, None).unwrap();
+
+        unsafe {
+            res.push_symbol("*include-path*");
+            for dir in path {
+                res.push_string(dir.to_str().unwrap());
+            }
+            res.push(Value::NIL);
+            for _ in path {
+                res.cons();
+            }
+            res.define();
+        }
+
         res
     }
 
@@ -301,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_gc() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         let n = 4i16;
         for i in 0..n { state.push(i); }
         state.push(Value::NIL);

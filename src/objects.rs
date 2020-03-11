@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         let len = 7;
         let i = 3;
         
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_string() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         let cs = "foo";
 
         let s = PgsString::new(&mut state, cs).unwrap();
@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn test_symbol() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         let name = "foo";
 
         let s = Symbol::new(&mut state, name).unwrap();
@@ -810,7 +810,7 @@ mod tests {
 
     #[test]
     fn test_pair() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         let a = Value::from(5i16);
         let b = Value::from(8i16);
 
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_bindings() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         let bindings = Bindings::new(&mut state, None).unwrap();
         let a = Value::from(5i16);
         let b = Value::from(8i16);
@@ -838,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_identity_hash() {
-        let mut state = State::new(1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 12, 1 << 20);
         let a = Value::from(5i16);
         let b = Value::from(8i16);
         let mut p = Pair::new(&mut state).unwrap();

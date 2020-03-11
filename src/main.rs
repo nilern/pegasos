@@ -29,6 +29,10 @@ const PROMPT: &str = "pegasos> ";
 struct CliArgs {
     #[structopt(short, long)]
     debug: bool,
+
+    /// Set include path
+    #[structopt(short = "I", parse(from_os_str))]
+    path: Vec<PathBuf>,
     
     /// Files to `(load)` initially
     #[structopt(name = "FILE", parse(from_os_str))]
@@ -36,9 +40,9 @@ struct CliArgs {
 }
 
 fn main() {
-    let CliArgs {debug, files} = CliArgs::from_args();
+    let CliArgs {debug, path, files} = CliArgs::from_args();
 
-    let mut state = State::new(1 << 16, 1 << 20);
+    let mut state = State::new(&path, 1 << 16, 1 << 20);
     let mut editor = rustyline::Editor::<()>::new();
 
     for path in files {
