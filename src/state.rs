@@ -261,3 +261,33 @@ impl<'a> Iterator for Frames<'a> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::convert::TryFrom;
+
+    #[test]
+    fn test_gc() {
+        let mut state = State::new(1 << 12, 1 << 20);
+        let n = 4i16;
+        for i in 0..n { state.push(i); }
+        state.push(Value::NIL);
+        for i in 0..n { unsafe { state.cons(); } }
+
+        unsafe { state.collect_garbage(); }
+        unsafe { state.collect_garbage(); } // overwrite initial heap and generally cause more havoc
+
+        let mut ls = state.pop().unwrap();
+        for i in 0..n {
+            if let Ok(pair) = Pair::try_from(ls) {
+                assert_eq!(pair.car, i.into());
+                ls = pair.cdr;
+            } else {
+                assert!(false);
+            }
+        }
+        assert_eq!(ls, Value::NIL);
+    }
+}
+

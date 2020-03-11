@@ -256,6 +256,7 @@ impl HeapObject for Object {
     fn ptr_fields(&mut self) -> Self::Fields { PtrFields::new(self) }
 }
 
+#[derive(Debug)]
 pub struct PtrFields {
     ptr: *mut Value,
     len: usize

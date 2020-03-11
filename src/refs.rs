@@ -117,6 +117,7 @@ impl Value {
                 Self::NIL => UnpackedValue::Nil,
                 Self::UNBOUND => UnpackedValue::Unbound,
                 Self::UNSPECIFIED => UnpackedValue::Unspecified,
+                Self::EOF => UnpackedValue::Eof,
                 _ => unimplemented!()
             },
             Tag::FrameTag => UnpackedValue::FrameTag(unsafe { transmute::<Value, FrameTag>(self) })

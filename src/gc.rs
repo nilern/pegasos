@@ -126,7 +126,7 @@ impl<O: HeapObject> MemoryManager<O> {
                         let res = self.alloc(*obj).unwrap(); // tospace is at least as big as fromspace
                         let new_obj = unsafe { &mut *res.as_mut_ptr().unwrap() }; // surely it is a pointer, we just allocated it
                         unsafe { ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size()); }
-                        *new_obj = unsafe { O::forwarding(new_obj.data()) };
+                        *obj = unsafe { O::forwarding(new_obj.data()) };
                         res
                     }
                 }
@@ -195,6 +195,8 @@ impl<'a, O: HeapObject> Collection<'a, O> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::fmt::{self, Formatter};
     use std::iter;
 
     #[derive(Clone, Copy)]
@@ -212,9 +214,9 @@ mod tests {
 
         unsafe fn forwarding(ptr: *const u8) -> Self { Self(ptr as usize | Self::FWD_TAG) }
 
-        fn forward(&self) -> Option<*mut u8> {
+        fn forward(&self) -> Option<Ref> {
             if self.0 & Self::MASK == Self::FWD_TAG {
-                Some((self.0 & !Self::MASK) as *mut u8)
+                Some(Ref((self.0 & !Self::MASK) as *mut u8))
             } else {
                 None
             }
@@ -225,15 +227,15 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
-    pub struct Obj {
+    struct Obj {
         header: Hdr
     }
 
     impl HeapObject for Obj {
-        type Ref = *mut u8;
+        type Ref = Ref;
         type Fields = iter::Empty<*mut Self::Ref>;
 
-        const LAPSED: Self::Ref = ptr::null_mut();
+        const LAPSED: Self::Ref = Ref(ptr::null_mut());
 
         fn is_alignment_hole(mem: *const Self) -> bool { Hdr::is_alignment_hole(unsafe { &(*mem).header }) }
 
@@ -247,11 +249,18 @@ mod tests {
         fn ptr_fields(&mut self) -> Self::Fields { iter::empty() }
     }
 
-    impl ObjectReference for *mut u8 {
+    #[derive(Clone, Copy)]
+    struct Ref(*mut u8);
+
+    impl ObjectReference for Ref {
         type Object = Obj;
 
-        unsafe fn from_ptr(ptr: *mut Self::Object) -> Self { ptr.add(1) as *mut u8 }
-        fn as_mut_ptr(self) -> Option<*mut Self::Object> { Some(unsafe { (self as *mut Self::Object).offset(-1) }) }
+        unsafe fn from_ptr(ptr: *mut Self::Object) -> Self { Ref(ptr.add(1) as *mut u8) }
+        fn as_mut_ptr(self) -> Option<*mut Self::Object> { Some(unsafe { (self.0 as *mut Self::Object).offset(-1) }) }
+    }
+
+    impl Display for Ref {
+        fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{:?}", self.0) }
     }
 
     #[test]
@@ -273,7 +282,7 @@ mod tests {
         let mut roots = [heap.alloc(obj).unwrap(), heap.alloc(obj).unwrap()];
         unsafe {
             heap.collection()
-                .roots(roots.iter_mut().map(|v| v as *mut *mut u8))
+                .roots(roots.iter_mut().map(|v| v as *mut Ref))
                 .traverse();
         }
     }
