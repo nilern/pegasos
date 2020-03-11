@@ -20,10 +20,10 @@ use super::state::State;
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
 pub enum HeapTag {
-    Pair = 0x0,
-    Vector = 0x1,
-    String = 0x2,
-    Symbol = 0x3,
+    String = 0x0,
+    Symbol = 0x1,
+    Pair = 0x2,
+    Vector = 0x3,
     Closure = 0x4,
     Bindings = 0x5
 }
