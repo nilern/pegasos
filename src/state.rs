@@ -1,12 +1,14 @@
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
+use std::env;
 use std::io;
 use std::iter;
 use std::mem::{size_of, transmute};
+use std::path::{Path, PathBuf};
 
 use super::gc::MemoryManager;
 use super::error::PgsError;
 use super::interpreter::RuntimeError;
-use super::objects::{Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure, Bindings};
+use super::objects::{Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure, Bindings, Cars};
 use super::refs::{Value, HeapValue, FrameTag};
 
 pub struct State {
@@ -216,6 +218,36 @@ impl State {
             done: self.stack.len() < 1
         }
     }
+
+    pub fn resolve_path(&mut self, filename: &str) -> Option<PathBuf> {
+        fn step(dir: &Path, filename: &str) -> Option<PathBuf> {
+            let mut path = PathBuf::new();
+            path.push(dir);
+            path.push(filename);
+            if path.exists() {
+                Some(path)
+            } else {
+                None
+            }
+        }
+
+        let ores = step(&env::current_dir().unwrap(), filename);
+        if ores.is_some() {
+            return ores;
+        }
+
+        let include_path = self.get_symbol("*include-path*")?;
+        for dir in Cars::of(self.env.get(include_path)?) {
+            let dir = PgsString::try_from(dir).expect("non-string in *include-path*"); // HACK
+
+            let ores = step(dir.as_ref(), filename);
+            if ores.is_some() {
+                return ores;
+            }
+        }
+
+        None
+    }
 }
 
 struct Frames<'a> {
@@ -273,7 +305,7 @@ mod tests {
         let n = 4i16;
         for i in 0..n { state.push(i); }
         state.push(Value::NIL);
-        for i in 0..n { unsafe { state.cons(); } }
+        for _ in 0..n { unsafe { state.cons(); } }
 
         unsafe { state.collect_garbage(); }
         unsafe { state.collect_garbage(); } // overwrite initial heap and generally cause more havoc

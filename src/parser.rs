@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::fmt::{self, Display, Formatter};
 
 use super::lexer::{self, Token, Lexer};
@@ -124,6 +125,41 @@ impl<I: Iterator<Item=char>> Parser<I> {
             Some(Err(lex_err)) => Err(Error::Lex(lex_err)),
             Some(_) => unimplemented!(),
             None => Ok(None)
+        }
+    }
+
+    pub unsafe fn sexprs(&mut self, state: &mut State) -> Result<(), Error> {
+        let mut nonempty = false;
+
+        loop {
+            match self.sexpr(state)? {
+                Some(()) => {
+                    let mut pair = Pair::new(state).unwrap_or_else(|| {
+                        state.collect_garbage();
+                        Pair::new(state).unwrap()
+                    });
+
+                    let parsed = state.pop().unwrap();
+                    if nonempty {
+                        let mut prev: Pair = state.pop().unwrap().try_into().unwrap();
+                        prev.cdr = pair.into();
+                    } else {
+                        state.push(pair);
+                        nonempty = true;
+                    }
+                    pair.car = parsed;
+                    state.push(pair);
+                },
+                None => {
+                    if nonempty {
+                        let mut pair: Pair = state.pop().unwrap().try_into().unwrap();
+                        pair.cdr = Value::NIL;
+                    } else {
+                        state.push(Value::NIL);
+                    }
+                    return Ok(());
+                }
+            }
         }
     }
 }

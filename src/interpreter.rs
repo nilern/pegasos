@@ -1,10 +1,14 @@
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Display, Formatter};
+use std::fs;
+use std::io;
 use std::mem::transmute;
 
 use super::error::PgsError;
+use super::lexer::Lexer;
 use super::state::State;
 use super::objects::{UnpackedHeapValue, PgsString, Symbol, Pair, Closure, Code, Vector};
+use super::parser::Parser;
 use super::refs::{Value, UnpackedValue, FrameTag};
 
 #[derive(Debug)]
@@ -28,7 +32,9 @@ pub enum RuntimeError {
         got: usize
     },
     Uncallable(Value),
-    Unbound(Symbol)
+    Unbound(Symbol),
+    NotInPath(Value), // HACK since PgsString seems unsized (but isn't really)
+    IO(io::Error)
 }
 
 impl Display for RuntimeError {
@@ -53,7 +59,9 @@ impl Display for RuntimeError {
                 write!(f, " {} return values but got {}", paramc, got)
             },
             RuntimeError::Uncallable(v) => write!(f, "{} cannot be called", v),
-            RuntimeError::Unbound(name) => write!(f, "Unbound variable: {}", name)
+            RuntimeError::Unbound(name) => write!(f, "Unbound variable: {}", name),
+            RuntimeError::NotInPath(filename) => write!(f, "File {} not found on *include-path*", filename),
+            RuntimeError::IO(io_err) => write!(f, "IO error: {}", io_err)
         }
     }
 }
@@ -256,6 +264,37 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                                 state.push(1u16);
                                                 op = Op::Continue;
                                                 continue;
+                                            }
+                                        }
+                                    }
+
+                                    state.raise(SyntaxError(pair.into()))?
+                                },
+                                "include" => {
+                                    if let Ok(args) = Pair::try_from(pair.cdr) {
+                                        if args.cdr == Value::NIL {
+                                            if let Ok(filename) = PgsString::try_from(args.car) {
+                                                if let Some(path) = state.resolve_path(&filename) {
+                                                    match fs::read_to_string(path) {
+                                                        Ok(contents) => {
+                                                            state.pop();
+                                                            let mut parser = Parser::new(Lexer::new(contents.chars()));
+
+                                                            match unsafe { parser.sexprs(state) } {
+                                                                Ok(()) => {
+                                                                    unsafe { state.push_symbol("begin"); }
+                                                                    state.swap();
+                                                                    unsafe { state.cons(); }
+                                                                    continue;
+                                                                },
+                                                                Err(err) => state.raise(err)?
+                                                            }
+                                                        },
+                                                        Err(io_err) => state.raise(RuntimeError::IO(io_err))?
+                                                    }
+                                                } else {
+                                                    state.raise(RuntimeError::NotInPath(filename.into()))?;
+                                                }
                                             }
                                         }
                                     }

@@ -196,7 +196,7 @@ impl<'a, O: HeapObject> Collection<'a, O> {
 mod tests {
     use super::*;
 
-    use std::fmt::{self, Formatter};
+    use std::fmt::{self, Display, Formatter};
     use std::iter;
 
     #[derive(Clone, Copy)]

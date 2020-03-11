@@ -564,6 +564,27 @@ impl Pair {
     }
 }
 
+pub struct Cars(Value);
+
+impl Cars {
+    pub fn of(value: Value) -> Self { Self(value) }
+
+    pub fn remainder(&self) -> Value { self.0 }
+}
+
+impl Iterator for Cars {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Ok(pair) = Pair::try_from(self.0) {
+            self.0 = pair.cdr;
+            Some(pair.car)
+        } else {
+            None
+        }
+    }
+}
+
 // ---
 
 #[repr(C)]

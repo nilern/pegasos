@@ -3,11 +3,13 @@ use std::fmt::{self, Display, Formatter};
 use std::iter::Peekable;
 
 use super::refs::Value;
-use super::objects::Symbol;
+use super::objects::{Symbol, PgsString};
 use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
-pub struct Error;
+pub enum Error {
+    Eof
+}
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{:?}", self) }
@@ -50,6 +52,20 @@ enum Radix {
 
 // ---
 
+const SPECIAL_INITIALS: &str = "!$%&*/:<=>?^_~";
+
+fn is_initial(c: char) -> bool {
+    c.is_alphabetic() || SPECIAL_INITIALS.contains(c)
+}
+
+const SPECIAL_SUBSEQUENTS: &str = "+-.@";
+
+fn is_subsequent(c: char) -> bool {
+    is_initial(c) || c.is_digit(10) || SPECIAL_SUBSEQUENTS.contains(c)
+}
+
+// ---
+
 pub struct Lexer<I: Iterator<Item=char>> {
     head: Option<Result<Token, Error>>,
     chars: Peekable<I>,
@@ -84,18 +100,18 @@ impl<I: Iterator<Item=char>> Lexer<I> {
                         None => m
                     });
                 },
-                _ => return res.map(|n| Token::Const(Value::try_from(n).unwrap()))
-                               .ok_or(Error)
+                _ => return Ok(Token::Const(Value::try_from(res.unwrap()).unwrap()))
             }
         }
     }
 
     unsafe fn identifier(&mut self, state: &mut State) -> Result<Token, Error> {
         self.buf.clear();
+        self.buf.push(self.chars.next().unwrap()); // first char, already checked
 
         loop {
             match self.peek_char() {
-                Some(c) if c.is_alphabetic() || c == '!' => {
+                Some(c) if is_subsequent(c) || c == '!' => {
                     let _ = self.chars.next();
                     self.buf.push(c);
                 },
@@ -103,6 +119,29 @@ impl<I: Iterator<Item=char>> Lexer<I> {
                     state.collect_garbage();
                     Symbol::new(state, &self.buf).unwrap()
                 })))
+            }
+        }
+    }
+
+    unsafe fn string(&mut self, state: &mut State) -> Result<Token, Error> {
+        let _ = self.chars.next(); // must be '"', skip it
+
+        self.buf.clear();
+
+        loop {
+            match self.peek_char() {
+                Some('"') => {
+                    let _ = self.chars.next();
+                    return Ok(Token::Const(PgsString::new(state, &self.buf).unwrap_or_else(|| {
+                        state.collect_garbage();
+                        PgsString::new(state, &self.buf).unwrap()
+                    }).into()));
+                },
+                Some(c) => {
+                    let _ = self.chars.next();
+                    self.buf.push(c);
+                },
+                None => return Err(Error::Eof)
             }
         }
     }
@@ -143,6 +182,7 @@ impl<I: Iterator<Item=char>> Lexer<I> {
                         let _ = self.chars.next();
                         return Some(Ok(Quote));
                     },
+                    Some('"') => return Some(self.string(state)),
                     Some('#') => {
                         let _ = self.chars.next();
                         match self.peek_char() {
@@ -156,7 +196,7 @@ impl<I: Iterator<Item=char>> Lexer<I> {
                         }
                     },
                     Some(c) if c.is_digit(10) => return Some(self.number(Radix::Decimal)),
-                    Some(c) if c.is_alphabetic() || c == '!' => return Some(self.identifier(state)),
+                    Some(c) if is_initial(c) => return Some(self.identifier(state)),
                     None => return None,
                     _ => unimplemented!()
                 }
@@ -176,7 +216,7 @@ mod tests {
         let mut state = State::new(1 << 12, 1 << 20);
         let foo: Symbol = Symbol::new(&mut state, "foo").unwrap();
 
-        let input = "  (23 #f foo)  ";
+        let input = "  (23 #f foo )  ";
         let mut lexer = Lexer::new(input.chars());
 
         let mut tokens = Vec::new();
