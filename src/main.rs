@@ -1,26 +1,26 @@
 extern crate rustyline;
 
+use rustyline::error::ReadlineError;
 use std::fs;
-use std::io::{Write, stderr};
+use std::io::{stderr, Write};
 use std::path::PathBuf;
 use std::process::exit;
 use structopt::StructOpt;
-use rustyline::error::ReadlineError;
 
-mod util;
-mod gc;
-mod refs;
-mod objects;
-mod lexer;
-mod state;
-mod parser;
-mod interpreter;
 mod error;
+mod gc;
+mod interpreter;
+mod lexer;
+mod objects;
+mod parser;
+mod refs;
+mod state;
+mod util;
 
+use interpreter::eval;
 use lexer::Lexer;
 use parser::Parser;
 use state::State;
-use interpreter::eval;
 
 const PROMPT: &str = "pegasos> ";
 
@@ -33,14 +33,14 @@ struct CliArgs {
     /// Set include path
     #[structopt(short = "I", parse(from_os_str))]
     path: Vec<PathBuf>,
-    
+
     /// Files to `(load)` initially
     #[structopt(name = "FILE", parse(from_os_str))]
     files: Vec<PathBuf>
 }
 
 fn main() {
-    let CliArgs {debug, path, files} = CliArgs::from_args();
+    let CliArgs { debug, path, files } = CliArgs::from_args();
 
     let mut state = State::new(&path, 1 << 16, 1 << 20);
     let mut editor = rustyline::Editor::<()>::new();
@@ -85,7 +85,9 @@ fn main() {
 
                             if debug {
                                 println!("");
-                                unsafe { state.dump(&mut stderr()).unwrap(); }
+                                unsafe {
+                                    state.dump(&mut stderr()).unwrap();
+                                }
                                 println!("\n");
                             }
                         }
@@ -101,7 +103,7 @@ fn main() {
             Err(ReadlineError::Eof) => {
                 println!("Ack, quitting.");
                 break;
-            }
+            },
             Err(err) => {
                 println!("Readline error: {:?}", err);
                 break;

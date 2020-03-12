@@ -6,31 +6,22 @@ use std::mem::transmute;
 
 use super::error::PgsError;
 use super::lexer::Lexer;
-use super::state::State;
-use super::objects::{UnpackedHeapValue, PgsString, Symbol, Pair, Closure, Code, Vector};
+use super::objects::{Closure, Code, Pair, PgsString, Symbol, UnpackedHeapValue, Vector};
 use super::parser::Parser;
-use super::refs::{Value, UnpackedValue, FrameTag};
+use super::refs::{FrameTag, UnpackedValue, Value};
+use super::state::State;
 
 #[derive(Debug)]
 pub struct SyntaxError(Value);
 
 impl Display for SyntaxError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Bad syntax: {}", self.0)
-    }
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "Bad syntax: {}", self.0) }
 }
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    Argc {
-        callee: Value,
-        params: (usize, bool),
-        got: usize
-    },
-    Retc {
-        cont_params: (usize, bool),
-        got: usize
-    },
+    Argc { callee: Value, params: (usize, bool), got: usize },
+    Retc { cont_params: (usize, bool), got: usize },
     Uncallable(Value),
     Unbound(Symbol),
     NotInPath(Value), // HACK since PgsString seems unsized (but isn't really)
@@ -40,7 +31,7 @@ pub enum RuntimeError {
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            RuntimeError::Argc {callee, params: (paramc, variadic), got} => {
+            RuntimeError::Argc { callee, params: (paramc, variadic), got } => {
                 write!(f, "{} expected ", callee)?;
                 if *variadic {
                     write!(f, "at least")?;
@@ -49,7 +40,7 @@ impl Display for RuntimeError {
                 }
                 write!(f, " {} arguments but was passed {}", paramc, got)
             },
-            RuntimeError::Retc {cont_params: (paramc, variadic), got} => {
+            RuntimeError::Retc { cont_params: (paramc, variadic), got } => {
                 write!(f, "expected ")?;
                 if *variadic {
                     write!(f, "at least")?;
@@ -60,13 +51,18 @@ impl Display for RuntimeError {
             },
             RuntimeError::Uncallable(v) => write!(f, "{} cannot be called", v),
             RuntimeError::Unbound(name) => write!(f, "Unbound variable: {}", name),
-            RuntimeError::NotInPath(filename) => write!(f, "File {} not found on *include-path*", filename),
+            RuntimeError::NotInPath(filename) =>
+                write!(f, "File {} not found on *include-path*", filename),
             RuntimeError::IO(io_err) => write!(f, "IO error: {}", io_err)
         }
     }
 }
 
-pub enum Op {Eval, Continue, Apply}
+pub enum Op {
+    Eval,
+    Continue,
+    Apply
+}
 
 pub fn eval(state: &mut State) -> Result<(), PgsError> {
     let mut op = Op::Eval;
@@ -74,7 +70,7 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
     state.push_env();
     state.push(FrameTag::Done);
     state.push(expr);
-    
+
     loop {
         match op {
             Op::Eval => match state.peek().unwrap().unpack() {
@@ -96,7 +92,7 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                                     state.push(FrameTag::Define);
                                                     state.push(value_expr);
                                                     continue;
-                                                } 
+                                                }
                                             }
                                         }
                                     }
@@ -195,7 +191,9 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                                     if let Ok(binding) = Pair::try_from(binding) {
                                                         let binder = binding.car;
 
-                                                        if let Ok(exprs) = Pair::try_from(binding.cdr) {
+                                                        if let Ok(exprs) =
+                                                            Pair::try_from(binding.cdr)
+                                                        {
                                                             let expr = exprs.car;
 
                                                             if exprs.cdr == Value::NIL {
@@ -238,7 +236,9 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                                 let mut arity = 0;
 
                                                 while let Ok(param_pair) = Pair::try_from(params) {
-                                                    if let Ok(param) = Symbol::try_from(param_pair.car) {
+                                                    if let Ok(param) =
+                                                        Symbol::try_from(param_pair.car)
+                                                    {
                                                         arity += 1;
                                                         params = param_pair.cdr;
                                                         state.push(param);
@@ -278,22 +278,31 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                                     match fs::read_to_string(path) {
                                                         Ok(contents) => {
                                                             state.pop();
-                                                            let mut parser = Parser::new(Lexer::new(contents.chars()));
+                                                            let mut parser = Parser::new(
+                                                                Lexer::new(contents.chars())
+                                                            );
 
                                                             match unsafe { parser.sexprs(state) } {
                                                                 Ok(()) => {
-                                                                    unsafe { state.push_symbol("begin"); }
+                                                                    unsafe {
+                                                                        state.push_symbol("begin");
+                                                                    }
                                                                     state.swap();
-                                                                    unsafe { state.cons(); }
+                                                                    unsafe {
+                                                                        state.cons();
+                                                                    }
                                                                     continue;
                                                                 },
                                                                 Err(err) => state.raise(err)?
                                                             }
                                                         },
-                                                        Err(io_err) => state.raise(RuntimeError::IO(io_err))?
+                                                        Err(io_err) =>
+                                                            state.raise(RuntimeError::IO(io_err))?,
                                                     }
                                                 } else {
-                                                    state.raise(RuntimeError::NotInPath(filename.into()))?;
+                                                    state.raise(RuntimeError::NotInPath(
+                                                        filename.into()
+                                                    ))?;
                                                 }
                                             }
                                         }
@@ -317,132 +326,192 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                         state.push(1u16);
                         op = Op::Continue;
                     },
-                    UnpackedHeapValue::Vector(_) => {op = Op::Continue; state.push(1u16);},
-                    UnpackedHeapValue::String(_) => {op = Op::Continue; state.push(1u16);},
+                    UnpackedHeapValue::Vector(_) => {
+                        op = Op::Continue;
+                        state.push(1u16);
+                    },
+                    UnpackedHeapValue::String(_) => {
+                        op = Op::Continue;
+                        state.push(1u16);
+                    },
                     _ => unimplemented!()
                 },
-                UnpackedValue::Fixnum(_) => {op = Op::Continue; state.push(1u16);},
-                UnpackedValue::Flonum(_) => {op = Op::Continue; state.push(1u16);},
-                UnpackedValue::Char(_) => {op = Op::Continue; state.push(1u16);},
-                UnpackedValue::Bool(_) => {op = Op::Continue; state.push(1u16);},
-                UnpackedValue::Unspecified => {op = Op::Continue; state.push(1u16);},
-                UnpackedValue::Eof => {op = Op::Continue; state.push(1u16);},
+                UnpackedValue::Fixnum(_) => {
+                    op = Op::Continue;
+                    state.push(1u16);
+                },
+                UnpackedValue::Flonum(_) => {
+                    op = Op::Continue;
+                    state.push(1u16);
+                },
+                UnpackedValue::Char(_) => {
+                    op = Op::Continue;
+                    state.push(1u16);
+                },
+                UnpackedValue::Bool(_) => {
+                    op = Op::Continue;
+                    state.push(1u16);
+                },
+                UnpackedValue::Unspecified => {
+                    op = Op::Continue;
+                    state.push(1u16);
+                },
+                UnpackedValue::Eof => {
+                    op = Op::Continue;
+                    state.push(1u16);
+                },
                 UnpackedValue::Nil => state.raise(SyntaxError(Value::NIL))?,
                 UnpackedValue::Unbound => unreachable!(),
                 UnpackedValue::FrameTag(_) => unreachable!()
-            }
+            },
 
             Op::Continue => {
                 let value_count = state.pop().unwrap().try_into().unwrap();
                 state.set_env(state.get(value_count + 1).unwrap().try_into().unwrap());
                 match unsafe { transmute::<Value, FrameTag>(state.get(value_count).unwrap()) } {
-                    FrameTag::Done => if value_count == 1 {
-                        let res = state.pop().unwrap();
-                        state.pop(); // frame tag
-                        state.pop(); // env
-                        state.push(res);
-                        break;
-                    } else {
-                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
-                    },
-                    FrameTag::Define => if value_count == 1 {
-                        let value = state.pop().unwrap();
-                        state.pop(); // frame tag
-                        state.pop(); // env
-                        state.push(value);
-                        unsafe { state.define(); }
-                        state.push(Value::UNSPECIFIED);
-                        state.push(1u16);
-                    } else {
-                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
-                    },
-                    FrameTag::Set => if value_count == 1 {
-                        let value = state.pop().unwrap();
-                        state.pop(); // frame tag
-                        state.pop(); // env
-                        state.push(value);
-                        state.set()?;
-                        state.push(1u16);
-                    } else {
-                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
-                    },
-                    FrameTag::CondBranch => if value_count == 1 {
-                        if state.pop().unwrap() != Value::FALSE {
+                    FrameTag::Done => {
+                        if value_count == 1 {
+                            let res = state.pop().unwrap();
                             state.pop(); // frame tag
                             state.pop(); // env
-                            state.pop(); // #f branch
+                            state.push(res);
+                            break;
                         } else {
+                            state.raise(RuntimeError::Retc {
+                                cont_params: (1, false),
+                                got: value_count
+                            })?;
+                        }
+                    },
+                    FrameTag::Define => {
+                        if value_count == 1 {
+                            let value = state.pop().unwrap();
                             state.pop(); // frame tag
                             state.pop(); // env
-                            let branch = state.pop().unwrap();
-                            state.pop(); // non-#f branch
-                            state.push(branch);
+                            state.push(value);
+                            unsafe {
+                                state.define();
+                            }
+                            state.push(Value::UNSPECIFIED);
+                            state.push(1u16);
+                        } else {
+                            state.raise(RuntimeError::Retc {
+                                cont_params: (1, false),
+                                got: value_count
+                            })?;
                         }
-                        op = Op::Eval;
-                    } else {
-                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
                     },
-                    FrameTag::Let => if value_count == 1 {
-                        let value = state.pop().unwrap();
-                        let i: usize = state.get(2).unwrap().try_into().unwrap();
-
-                        if let Ok(name) = Symbol::try_from(state.get(3 + i).unwrap()) {
-                            let bindings = state.get(4 + i).unwrap();
-
-                            if let Ok(bindings) = Pair::try_from(bindings) {
-                                let binding = bindings.car;
-
-                                if let Ok(binding) = Pair::try_from(binding) {
-                                    let binder = binding.car;
-
-                                    if let Ok(exprs) = Pair::try_from(binding.cdr) {
-                                        let expr = exprs.car;
-
-                                        if exprs.cdr == Value::NIL {
-                                            state.put(3 + i, binder);
-                                            state.put(4 + i, bindings.cdr);
-                                            state.pop(); // frame tag
-                                            state.pop(); // env
-                                            state.pop(); // i 
-                                            state.push(name);
-                                            state.push(value);
-                                            state.push(Value::try_from(i + 2).unwrap());
-                                            state.push_env();
-                                            state.push(FrameTag::Let);
-                                            state.push(expr);
-                                            op = Op::Eval;
-                                            continue;
-                                        }
-                                    }
-                                }
-
-                                state.raise(SyntaxError(binding))?;
-                            } else if bindings == Value::NIL {
+                    FrameTag::Set => {
+                        if value_count == 1 {
+                            let value = state.pop().unwrap();
+                            state.pop(); // frame tag
+                            state.pop(); // env
+                            state.push(value);
+                            state.set()?;
+                            state.push(1u16);
+                        } else {
+                            state.raise(RuntimeError::Retc {
+                                cont_params: (1, false),
+                                got: value_count
+                            })?;
+                        }
+                    },
+                    FrameTag::CondBranch => {
+                        if value_count == 1 {
+                            if state.pop().unwrap() != Value::FALSE {
                                 state.pop(); // frame tag
                                 state.pop(); // env
-                                state.pop(); // i
-                                state.push(name);
-                                state.push(value);
-                                unsafe { state.push_scope(); }
-                                // FIXME: It is an error for a <variable> to appear more than once
-                                for _ in 0..i / 2 + 1 { unsafe { state.define(); } }
-                                state.pop(); // name
-                                state.pop(); // bindings
-                                op = Op::Eval;
+                                state.pop(); // #f branch
                             } else {
-                                state.raise(SyntaxError(bindings))?;
+                                state.pop(); // frame tag
+                                state.pop(); // env
+                                let branch = state.pop().unwrap();
+                                state.pop(); // non-#f branch
+                                state.push(branch);
+                            }
+                            op = Op::Eval;
+                        } else {
+                            state.raise(RuntimeError::Retc {
+                                cont_params: (1, false),
+                                got: value_count
+                            })?;
+                        }
+                    },
+                    FrameTag::Let => {
+                        if value_count == 1 {
+                            let value = state.pop().unwrap();
+                            let i: usize = state.get(2).unwrap().try_into().unwrap();
+
+                            if let Ok(name) = Symbol::try_from(state.get(3 + i).unwrap()) {
+                                let bindings = state.get(4 + i).unwrap();
+
+                                if let Ok(bindings) = Pair::try_from(bindings) {
+                                    let binding = bindings.car;
+
+                                    if let Ok(binding) = Pair::try_from(binding) {
+                                        let binder = binding.car;
+
+                                        if let Ok(exprs) = Pair::try_from(binding.cdr) {
+                                            let expr = exprs.car;
+
+                                            if exprs.cdr == Value::NIL {
+                                                state.put(3 + i, binder);
+                                                state.put(4 + i, bindings.cdr);
+                                                state.pop(); // frame tag
+                                                state.pop(); // env
+                                                state.pop(); // i
+                                                state.push(name);
+                                                state.push(value);
+                                                state.push(Value::try_from(i + 2).unwrap());
+                                                state.push_env();
+                                                state.push(FrameTag::Let);
+                                                state.push(expr);
+                                                op = Op::Eval;
+                                                continue;
+                                            }
+                                        }
+                                    }
+
+                                    state.raise(SyntaxError(binding))?;
+                                } else if bindings == Value::NIL {
+                                    state.pop(); // frame tag
+                                    state.pop(); // env
+                                    state.pop(); // i
+                                    state.push(name);
+                                    state.push(value);
+                                    unsafe {
+                                        state.push_scope();
+                                    }
+                                    // FIXME: It is an error for a <variable> to appear more than
+                                    // once
+                                    for _ in 0..i / 2 + 1 {
+                                        unsafe {
+                                            state.define();
+                                        }
+                                    }
+                                    state.pop(); // name
+                                    state.pop(); // bindings
+                                    op = Op::Eval;
+                                } else {
+                                    state.raise(SyntaxError(bindings))?;
+                                }
+                            } else {
+                                state.raise(SyntaxError(state.get(3 + i).unwrap()))?;
                             }
                         } else {
-                            state.raise(SyntaxError(state.get(3 + i).unwrap()))?;
+                            state.raise(RuntimeError::Retc {
+                                cont_params: (1, false),
+                                got: value_count
+                            })?;
                         }
-                    } else {
-                        state.raise(RuntimeError::Retc {cont_params: (1, false), got: value_count})?;
                     },
                     FrameTag::Stmt => {
                         let stmts = state.get(value_count + 2).unwrap();
 
                         if let Ok(stmts) = Pair::try_from(stmts) {
-                            for _ in 0..value_count { state.pop(); }
+                            for _ in 0..value_count {
+                                state.pop();
+                            }
                             state.put(2, stmts.cdr);
                             state.push(stmts.car);
                             op = Op::Eval;
@@ -455,40 +524,46 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                             state.raise(SyntaxError(stmts))?;
                         }
                     },
-                    FrameTag::Arg => if value_count == 1 {
-                        let value = state.pop().unwrap();
-                        let i: usize = state.get(2).unwrap().try_into().unwrap();
-                        let rargs = state.get(3 + i).unwrap();
+                    FrameTag::Arg => {
+                        if value_count == 1 {
+                            let value = state.pop().unwrap();
+                            let i: usize = state.get(2).unwrap().try_into().unwrap();
+                            let rargs = state.get(3 + i).unwrap();
 
-                        // OPTIMIZE:
-                        if let Ok(rargs) = Pair::try_from(rargs) {
-                            state.pop(); // frame tag
-                            state.pop(); // env
-                            state.pop(); // i
-                            state.put(i, rargs.cdr);
-                            state.push(value);
-                            state.push(Value::try_from(i + 1).unwrap());
-                            state.push_env();
-                            state.push(FrameTag::Arg);
-                            state.push(rargs.car);
-                            op = Op::Eval;
-                        } else if rargs == Value::NIL {
-                            state.pop(); // frame tag
-                            state.pop(); // env
-                            state.pop(); // i
-                            state.push(value);
-                            state.push(Value::try_from(i).unwrap()); // argc for apply
-                            state.remove(i + 2); // rargs
-                            op = Op::Apply;
+                            // OPTIMIZE:
+                            if let Ok(rargs) = Pair::try_from(rargs) {
+                                state.pop(); // frame tag
+                                state.pop(); // env
+                                state.pop(); // i
+                                state.put(i, rargs.cdr);
+                                state.push(value);
+                                state.push(Value::try_from(i + 1).unwrap());
+                                state.push_env();
+                                state.push(FrameTag::Arg);
+                                state.push(rargs.car);
+                                op = Op::Eval;
+                            } else if rargs == Value::NIL {
+                                state.pop(); // frame tag
+                                state.pop(); // env
+                                state.pop(); // i
+                                state.push(value);
+                                state.push(Value::try_from(i).unwrap()); // argc for apply
+                                state.remove(i + 2); // rargs
+                                op = Op::Apply;
+                            } else {
+                                state.raise(SyntaxError(rargs))?;
+                            }
                         } else {
-                            state.raise(SyntaxError(rargs))?;
+                            state.raise(RuntimeError::Retc {
+                                cont_params: (1, false),
+                                got: value_count
+                            })?;
                         }
-                    } else {
-                        state.raise(RuntimeError::Retc{cont_params: (1, false), got: value_count})?;
                     }
                 }
             },
-            Op::Apply => { // ... callee arg{argc} argc
+            Op::Apply => {
+                // ... callee arg{argc} argc
                 let arg_count: usize = state.peek().unwrap().try_into().unwrap();
 
                 if let Ok(callee) = Closure::try_from(state.get(arg_count + 1).unwrap()) {
@@ -499,8 +574,10 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                 let fixed_argc = params.len();
                                 let variadic = rest_param != Value::NIL;
 
-                                if arg_count == fixed_argc || variadic && arg_count >= fixed_argc { // OPTIMIZE?
-                                    // FIXME: It is an error for a <variable> to appear more than once
+                                if arg_count == fixed_argc || variadic && arg_count >= fixed_argc {
+                                    // OPTIMIZE?
+                                    // FIXME: It is an error for a <variable> to appear more than
+                                    // once
                                     let leftover_argc = arg_count - fixed_argc;
 
                                     state.pop(); // argc
@@ -510,32 +587,44 @@ pub fn eval(state: &mut State) -> Result<(), PgsError> {
                                     state.insert_after(arg_count, rest_param);
 
                                     state.set_env(env.try_into().unwrap());
-                                    unsafe { state.push_scope(); }
+                                    unsafe {
+                                        state.push_scope();
+                                    }
 
                                     if variadic {
                                         state.push(Value::NIL);
                                         for _ in 0..leftover_argc {
-                                            unsafe { state.cons(); }
+                                            unsafe {
+                                                state.cons();
+                                            }
                                         }
                                         let rest_param = state.get(fixed_argc + 1).unwrap();
                                         state.insert_after(1, rest_param);
-                                        unsafe { state.define(); }
+                                        unsafe {
+                                            state.define();
+                                        }
                                     }
 
                                     for ri in 0..fixed_argc {
                                         let i = fixed_argc - 1 - ri;
-                                        let params = unsafe { transmute::<Value, Vector>(state.get(i + 2).unwrap()) };
+                                        let params = unsafe {
+                                            transmute::<Value, Vector>(state.get(i + 2).unwrap())
+                                        };
                                         state.insert_after(1, params[i]);
-                                        unsafe { state.define(); }
+                                        unsafe {
+                                            state.define();
+                                        }
                                     }
 
                                     state.pop(); // rest_param
                                     state.pop(); // params
                                     op = Op::Eval;
                                 } else {
-                                    state.raise(RuntimeError::Argc {callee: callee.into(),
-                                                                    params: (fixed_argc, variadic),
-                                                                    got: arg_count})?;
+                                    state.raise(RuntimeError::Argc {
+                                        callee: callee.into(),
+                                        params: (fixed_argc, variadic),
+                                        got: arg_count
+                                    })?;
                                 }
                             },
                             _ => unreachable!()
@@ -562,7 +651,7 @@ mod tests {
     #[test]
     fn test_const() {
         let mut state = State::new(&[], 1 << 12, 1 << 20);
-        
+
         state.push(Value::from('a'));
         eval(&mut state).unwrap();
 
@@ -578,7 +667,7 @@ mod tests {
     #[test]
     fn test_nil() {
         let mut state = State::new(&[], 1 << 12, 1 << 20);
-        
+
         state.push(Value::NIL);
         let res = eval(&mut state);
 
@@ -590,17 +679,23 @@ mod tests {
         let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(define foo 5)".chars()));
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
         assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
 
         let mut parser = Parser::new(Lexer::new("(set! foo 8)".chars()));
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
         assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
 
         let mut parser = Parser::new(Lexer::new("foo".chars()));
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
         assert_eq!(state.pop().unwrap(), Value::from(8i16));
     }
@@ -611,14 +706,18 @@ mod tests {
 
         let mut parser = Parser::new(Lexer::new("'()".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::NIL);
 
         let mut parser = Parser::new(Lexer::new("(quote () ())".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         assert!(eval(&mut state).is_err());
     }
 
@@ -628,14 +727,18 @@ mod tests {
 
         let mut parser = Parser::new(Lexer::new("(begin 42 23)".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(23i16));
 
         let mut parser = Parser::new(Lexer::new("(begin)".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         assert!(eval(&mut state).is_err());
     }
 
@@ -645,7 +748,9 @@ mod tests {
 
         let mut parser = Parser::new(Lexer::new("(if #t 42 23)".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(42i16));
@@ -655,9 +760,12 @@ mod tests {
     fn test_let() {
         let mut state = State::new(&[], 1 << 12, 1 << 20);
 
-        let mut parser = Parser::new(Lexer::new("(let ((a (if #f 5 8)) (b #f)) (if b 42 a))".chars()));
+        let mut parser =
+            Parser::new(Lexer::new("(let ((a (if #f 5 8)) (b #f)) (if b 42 a))".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(8i16));
@@ -668,11 +776,12 @@ mod tests {
         let mut state = State::new(&[], 1 << 12, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("((lambda (a b) b) 5 8)".chars()));
- 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         eval(&mut state).unwrap();
 
         assert_eq!(state.pop().unwrap(), Value::from(8i16));
     }
 }
-

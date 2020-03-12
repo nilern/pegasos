@@ -1,18 +1,15 @@
 use std::convert::TryInto;
 use std::fmt::{self, Display, Formatter};
 
-use super::lexer::{self, Token, Lexer};
-use super::state::State;
-use super::objects::{Symbol, Pair, Vector};
+use super::lexer::{self, Lexer, Token};
+use super::objects::{Pair, Symbol, Vector};
 use super::refs::Value;
+use super::state::State;
 
 #[derive(Debug)]
 pub enum Error {
     Lex(lexer::Error),
-    Expected {
-        expected: lexer::Token,
-        actual: lexer::Token
-    },
+    Expected { expected: lexer::Token, actual: lexer::Token },
     Eof
 }
 
@@ -20,18 +17,19 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Error::Lex(lex_err) => write!(f, "Lexical error: {}.", lex_err),
-            Error::Expected {expected, actual} => write!(f, "Was expecting '{}' but got '{}'.", expected, actual),
+            Error::Expected { expected, actual } =>
+                write!(f, "Was expecting '{}' but got '{}'.", expected, actual),
             Error::Eof => write!(f, "Incomplete datum, input ran out.")
         }
     }
 }
 
-pub struct Parser<I: Iterator<Item=char>> {
+pub struct Parser<I: Iterator<Item = char>> {
     lexer: Lexer<I>
 }
 
-impl<I: Iterator<Item=char>> Parser<I> {
-    pub fn new(lexer: Lexer<I>) -> Self { Self {lexer} }
+impl<I: Iterator<Item = char>> Parser<I> {
+    pub fn new(lexer: Lexer<I>) -> Self { Self { lexer } }
 
     pub unsafe fn sexpr(&mut self, state: &mut State) -> Result<Option<()>, Error> {
         use Token::*;
@@ -40,7 +38,7 @@ impl<I: Iterator<Item=char>> Parser<I> {
             Some(Ok(LParen)) => {
                 let _ = self.lexer.next(state);
                 let mut len = 0;
-                
+
                 loop {
                     match self.lexer.peek(state) {
                         Some(Ok(RParen)) => {
@@ -58,7 +56,8 @@ impl<I: Iterator<Item=char>> Parser<I> {
                             self.sexpr(state).and_then(|v| v.ok_or(Error::Eof))?;
                             match self.lexer.next(state) {
                                 Some(Ok(RParen)) => {},
-                                Some(Ok(actual)) => return Err(Error::Expected {expected: RParen, actual}),
+                                Some(Ok(actual)) =>
+                                    return Err(Error::Expected { expected: RParen, actual }),
                                 Some(Err(lex_err)) => return Err(Error::Lex(lex_err)),
                                 None => return Err(Error::Eof)
                             }
@@ -106,22 +105,20 @@ impl<I: Iterator<Item=char>> Parser<I> {
                 state.cons();
                 Ok(Some(()))
             },
-            Some(Ok(Identifier(_))) => {
+            Some(Ok(Identifier(_))) =>
                 if let Some(Ok(Identifier(sym))) = self.lexer.next(state) {
                     state.push(sym);
                     Ok(Some(()))
                 } else {
                     unreachable!()
-                }
-            }
-            Some(Ok(Const(_))) => {
+                },
+            Some(Ok(Const(_))) =>
                 if let Some(Ok(Const(v))) = self.lexer.next(state) {
                     state.push(v);
                     Ok(Some(()))
                 } else {
                     unreachable!()
-                }
-            },
+                },
             Some(Err(lex_err)) => Err(Error::Lex(lex_err)),
             Some(_) => unimplemented!(),
             None => Ok(None)
@@ -174,7 +171,9 @@ mod tests {
     fn test_const() {
         let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" 23 ".chars()));
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         assert_eq!(state.pop().unwrap(), Value::from(23i16));
     }
 
@@ -182,10 +181,14 @@ mod tests {
     fn test_symbol() {
         let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" foo ".chars()));
-        unsafe { state.push_symbol("foo"); }
+        unsafe {
+            state.push_symbol("foo");
+        }
         let symbol: Symbol = state.pop().unwrap().try_into().unwrap();
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         let parsed: Value = state.pop().unwrap();
         let parsed: Symbol = parsed.try_into().unwrap();
 
@@ -198,7 +201,9 @@ mod tests {
         let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" () ".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
 
         assert_eq!(state.pop().unwrap(), Value::NIL);
     }
@@ -208,7 +213,9 @@ mod tests {
         let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5) ".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         let parsed: Pair = state.pop().unwrap().try_into().unwrap();
 
         assert_eq!(parsed.car, Value::from(5i16));
@@ -220,7 +227,9 @@ mod tests {
         let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5 . 8) ".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         let parsed: Pair = state.pop().unwrap().try_into().unwrap();
 
         assert_eq!(parsed.car, Value::from(5i16));
@@ -232,11 +241,12 @@ mod tests {
         let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" #(5) ".chars()));
 
-        unsafe { parser.sexpr(&mut state).unwrap(); }
+        unsafe {
+            parser.sexpr(&mut state).unwrap();
+        }
         let parsed: Vector = state.pop().unwrap().try_into().unwrap();
 
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0], Value::from(5i16));
     }
 }
-

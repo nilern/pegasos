@@ -1,0 +1,10 @@
+comment_width = 100
+fn_args_layout = "Compressed"
+fn_single_line = true
+match_arm_blocks = false
+match_block_trailing_comma = true
+overflow_delimited_expr = true
+trailing_comma = "Never"
+use_small_heuristics = "Max"
+wrap_comments = true
+

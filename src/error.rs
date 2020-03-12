@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
+use super::interpreter::{RuntimeError, SyntaxError};
 use super::parser;
-use super::interpreter::{SyntaxError, RuntimeError};
 
 #[derive(Debug)]
 pub enum PgsError {
@@ -31,4 +31,3 @@ impl Display for PgsError {
         }
     }
 }
-

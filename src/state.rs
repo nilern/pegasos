@@ -5,11 +5,13 @@ use std::iter;
 use std::mem::{size_of, transmute};
 use std::path::{Path, PathBuf};
 
-use super::gc::MemoryManager;
 use super::error::PgsError;
+use super::gc::MemoryManager;
 use super::interpreter::RuntimeError;
-use super::objects::{Object, PgsString, Symbol, Pair, Vector, SymbolTable, Closure, Bindings, Cars};
-use super::refs::{Value, HeapValue, FrameTag};
+use super::objects::{
+    Bindings, Cars, Closure, Object, Pair, PgsString, Symbol, SymbolTable, Vector
+};
+use super::refs::{FrameTag, HeapValue, Value};
 
 pub struct State {
     heap: MemoryManager<Object>,
@@ -118,7 +120,7 @@ impl State {
 
     pub unsafe fn vector(&mut self, len: usize) {
         debug_assert!(self.stack.len() >= len);
-        
+
         let mut vec = Vector::new(self, len).unwrap_or_else(|| {
             self.collect_garbage();
             Vector::new(self, len).unwrap()
@@ -127,10 +129,10 @@ impl State {
         self.stack.truncate(self.stack.len() - len);
         self.push(vec)
     }
- 
+
     pub unsafe fn closure(&mut self, code: usize, len: usize) {
         debug_assert!(self.stack.len() >= len);
-        
+
         let mut f = Closure::new(self, code, len).unwrap_or_else(|| {
             self.collect_garbage();
             Closure::new(self, code, len).unwrap()
@@ -143,7 +145,7 @@ impl State {
     pub fn get_symbol(&mut self, name: &str) -> Option<Symbol> {
         self.symbol_table.get(&mut self.heap, name)
     }
-   
+
     pub fn push_env(&mut self) { self.push(self.env) }
 
     pub fn set_env(&mut self, env: Bindings) { self.env = env }
@@ -193,7 +195,8 @@ impl State {
 
     // TODO: References from symbol table should be weak
     pub unsafe fn collect_garbage(&mut self) {
-        self.heap.collection()
+        self.heap
+            .collection()
             .roots(self.stack.iter_mut().map(|v| v as *mut Value))
             .roots(iter::once(transmute::<&mut Bindings, *mut Value>(&mut self.env)))
             .traverse()
@@ -220,16 +223,12 @@ impl State {
                 writeln!(dest, "\t{}", slot)?;
             }
         }
-        
+
         Ok(())
     }
 
     unsafe fn stack_frames(&self) -> Frames {
-        Frames {
-            stack: &self.stack,
-            index: self.stack.len() - 1,
-            done: self.stack.len() < 1
-        }
+        Frames { stack: &self.stack, index: self.stack.len() - 1, done: self.stack.len() < 1 }
     }
 
     pub fn resolve_path(&mut self, filename: &str) -> Option<PathBuf> {
@@ -316,12 +315,22 @@ mod tests {
     fn test_gc() {
         let mut state = State::new(&[], 1 << 12, 1 << 20);
         let n = 4i16;
-        for i in 0..n { state.push(i); }
+        for i in 0..n {
+            state.push(i);
+        }
         state.push(Value::NIL);
-        for _ in 0..n { unsafe { state.cons(); } }
+        for _ in 0..n {
+            unsafe {
+                state.cons();
+            }
+        }
 
-        unsafe { state.collect_garbage(); }
-        unsafe { state.collect_garbage(); } // overwrite initial heap and generally cause more havoc
+        unsafe {
+            state.collect_garbage();
+        }
+        unsafe {
+            state.collect_garbage();
+        } // overwrite initial heap and generally cause more havoc
 
         let mut ls = state.pop().unwrap();
         for i in 0..n {
@@ -335,4 +344,3 @@ mod tests {
         assert_eq!(ls, Value::NIL);
     }
 }
-

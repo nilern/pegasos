@@ -7,8 +7,8 @@ use std::marker::PhantomData;
 use std::mem::{self, size_of, transmute};
 use std::ops::{Deref, DerefMut};
 
-use super::gc::{ObjectReference, HeapObject};
-use super::objects::{Heaped, Object, HeapTag, UnpackedHeapValue};
+use super::gc::{HeapObject, ObjectReference};
+use super::objects::{HeapTag, Heaped, Object, UnpackedHeapValue};
 use super::util::fsize;
 
 // ---
@@ -29,7 +29,7 @@ enum Tag {
     Char = 0b0111, // (28 | 60) bit char
     Bool = 0b1011,
     Singleton = 0b0011, // '() etc.
-    FrameTag = 0b1111 // not visible on Scheme side
+    FrameTag = 0b1111   // not visible on Scheme side
 }
 
 pub enum UnpackedValue {
@@ -51,9 +51,7 @@ pub enum UnpackedValue {
 pub struct Value(usize);
 
 impl Value {
-    pub unsafe fn from_data(ptr: *mut u8) -> Self {
-        Self(ptr as usize | BaseTag::ORef as usize)
-    }
+    pub unsafe fn from_data(ptr: *mut u8) -> Self { Self(ptr as usize | BaseTag::ORef as usize) }
 }
 
 impl ObjectReference for Value {
@@ -108,10 +106,12 @@ impl Value {
 
     pub fn unpack(self) -> UnpackedValue {
         match self.tag() {
-            Tag::ORef => UnpackedValue::ORef(HeapValue {value: self, _phantom: PhantomData}),
+            Tag::ORef => UnpackedValue::ORef(HeapValue { value: self, _phantom: PhantomData }),
             Tag::Fixnum => UnpackedValue::Fixnum((self.0 >> Self::SHIFT) as isize),
             Tag::Flonum => unimplemented!(),
-            Tag::Char => UnpackedValue::Char(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) }),
+            Tag::Char => UnpackedValue::Char(unsafe {
+                char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32)
+            }),
             Tag::Bool => UnpackedValue::Bool((self.0 >> Self::EXT_SHIFT) != 0),
             Tag::Singleton => match self {
                 Self::NIL => UnpackedValue::Nil,
@@ -147,8 +147,8 @@ impl TryFrom<isize> for Value {
     type Error = (); // FIXME
 
     fn try_from(n: isize) -> Result<Self, Self::Error> {
-        if n >> Self::BOUNDS_SHIFT == 0
-           || n >> Self::BOUNDS_SHIFT == !0 as isize // fits in 30/62 bits, OPTIMIZE
+        if n >> Self::BOUNDS_SHIFT == 0 || n >> Self::BOUNDS_SHIFT == !0 as isize
+        // fits in 30/62 bits, OPTIMIZE
         {
             Ok(Self((n << Self::SHIFT) as usize | BaseTag::Fixnum as usize))
         } else {
@@ -173,7 +173,8 @@ impl TryFrom<usize> for Value {
     type Error = (); // FIXME
 
     fn try_from(n: usize) -> Result<Self, Self::Error> {
-        if n >> Self::BOUNDS_SHIFT == 0 { // fits in 30/62 bits, OPTIMIZE
+        if n >> Self::BOUNDS_SHIFT == 0 {
+            // fits in 30/62 bits, OPTIMIZE
             Ok(Self(n << Self::SHIFT | BaseTag::Fixnum as usize))
         } else {
             Err(())
@@ -197,8 +198,11 @@ impl TryFrom<fsize> for Value {
     type Error = (); // FIXME
 
     fn try_from(n: fsize) -> Result<Self, Self::Error> {
-        if unimplemented!() { // fits in 30/62 bits
-            Ok(Self(unsafe { mem::transmute::<_, usize>(n) } << Self::SHIFT | BaseTag::Flonum as usize))
+        if unimplemented!() {
+            // fits in 30/62 bits
+            Ok(Self(
+                unsafe { mem::transmute::<_, usize>(n) } << Self::SHIFT | BaseTag::Flonum as usize
+            ))
         } else {
             Err(())
         }
@@ -298,7 +302,7 @@ pub struct HeapValue<T: ?Sized> {
 }
 
 impl<T: ?Sized> Clone for HeapValue<T> {
-    fn clone(&self) -> Self { Self {value: self.value, _phantom: self._phantom} }
+    fn clone(&self) -> Self { Self { value: self.value, _phantom: self._phantom } }
 }
 
 impl<T: ?Sized> Copy for HeapValue<T> {}
@@ -310,9 +314,7 @@ impl<T> PartialEq for HeapValue<T> {
 impl<T: ?Sized> HeapValue<T> {
     pub fn heap_tag(self) -> HeapTag { unsafe { (*self.as_ptr()).tag() } }
 
-    pub fn as_ptr(self) -> *mut Object {
-        unsafe { (self.data() as *mut Object).offset(-1) }
-    }
+    pub fn as_ptr(self) -> *mut Object { unsafe { (self.data() as *mut Object).offset(-1) } }
 
     pub fn data(self) -> *mut u8 { (self.value.0 & !Value::MASK) as *mut u8 }
 
@@ -322,24 +324,30 @@ impl<T: ?Sized> HeapValue<T> {
 impl HeapValue<()> {
     pub fn unpack(self) -> UnpackedHeapValue {
         match self.heap_tag() {
-            HeapTag::Vector => UnpackedHeapValue::Vector(HeapValue {value: self.value, _phantom: PhantomData}),
-            HeapTag::String => UnpackedHeapValue::String(HeapValue {value: self.value, _phantom: PhantomData}),
-            HeapTag::Symbol => UnpackedHeapValue::Symbol(HeapValue {value: self.value, _phantom: PhantomData}),
-            HeapTag::Pair => UnpackedHeapValue::Pair(HeapValue {value: self.value, _phantom: PhantomData}),
-            HeapTag::Bindings => UnpackedHeapValue::Bindings(HeapValue {value: self.value, _phantom: PhantomData}),
-            HeapTag::Closure => UnpackedHeapValue::Closure(HeapValue {value: self.value, _phantom: PhantomData})
+            HeapTag::Vector =>
+                UnpackedHeapValue::Vector(HeapValue { value: self.value, _phantom: PhantomData }),
+            HeapTag::String =>
+                UnpackedHeapValue::String(HeapValue { value: self.value, _phantom: PhantomData }),
+            HeapTag::Symbol =>
+                UnpackedHeapValue::Symbol(HeapValue { value: self.value, _phantom: PhantomData }),
+            HeapTag::Pair =>
+                UnpackedHeapValue::Pair(HeapValue { value: self.value, _phantom: PhantomData }),
+            HeapTag::Bindings =>
+                UnpackedHeapValue::Bindings(HeapValue { value: self.value, _phantom: PhantomData }),
+            HeapTag::Closure =>
+                UnpackedHeapValue::Closure(HeapValue { value: self.value, _phantom: PhantomData }),
         }
     }
 }
 
 impl<T> Deref for HeapValue<T> {
     type Target = T;
-    
-    fn deref(&self) -> &Self::Target { unsafe{ &*(self.data() as *const T) } }
+
+    fn deref(&self) -> &Self::Target { unsafe { &*(self.data() as *const T) } }
 }
 
 impl<T> DerefMut for HeapValue<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut*(self.data() as *mut T) } }
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *(self.data() as *mut T) } }
 }
 
 impl<T: ?Sized> From<HeapValue<T>> for Value {
@@ -351,7 +359,7 @@ impl TryFrom<Value> for HeapValue<()> {
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         if value.base_tag() == BaseTag::ORef {
-            Ok(Self {value, _phantom: PhantomData})
+            Ok(Self { value, _phantom: PhantomData })
         } else {
             Err(())
         }
@@ -364,7 +372,7 @@ impl<T: Heaped + ?Sized> TryFrom<Value> for HeapValue<T> {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         if let Ok(oref) = HeapValue::<()>::try_from(value) {
             if oref.heap_tag() == T::TAG {
-                Ok(HeapValue {value: oref.value, _phantom: PhantomData})
+                Ok(HeapValue { value: oref.value, _phantom: PhantomData })
             } else {
                 Err(())
             }
@@ -425,4 +433,3 @@ mod tests {
         assert_eq!(m, u.try_into().unwrap());
     }
 }
-

@@ -2,8 +2,8 @@ use std::convert::TryFrom;
 use std::fmt::{self, Display, Formatter};
 use std::iter::Peekable;
 
+use super::objects::{PgsString, Symbol};
 use super::refs::Value;
-use super::objects::{Symbol, PgsString};
 use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
@@ -19,7 +19,9 @@ impl Display for Error {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Token {
-    LParen, RParen, OpenVector,
+    LParen,
+    RParen,
+    OpenVector,
     Dot,
     Quote,
     Identifier(Symbol),
@@ -54,9 +56,7 @@ enum Radix {
 
 const SPECIAL_INITIALS: &str = "!$%&*/:<=>?^_~";
 
-fn is_initial(c: char) -> bool {
-    c.is_alphabetic() || SPECIAL_INITIALS.contains(c)
-}
+fn is_initial(c: char) -> bool { c.is_alphabetic() || SPECIAL_INITIALS.contains(c) }
 
 const SPECIAL_SUBSEQUENTS: &str = "+-.@";
 
@@ -66,14 +66,16 @@ fn is_subsequent(c: char) -> bool {
 
 // ---
 
-pub struct Lexer<I: Iterator<Item=char>> {
+pub struct Lexer<I: Iterator<Item = char>> {
     head: Option<Result<Token, Error>>,
     chars: Peekable<I>,
     buf: String
 }
 
-impl<I: Iterator<Item=char>> Lexer<I> {
-    pub fn new(chars: I) -> Self { Self {head: None, chars: chars.peekable(), buf: String::new()} }
+impl<I: Iterator<Item = char>> Lexer<I> {
+    pub fn new(chars: I) -> Self {
+        Self { head: None, chars: chars.peekable(), buf: String::new() }
+    }
 
     fn peek_char(&mut self) -> Option<char> { self.chars.peek().map(|&c| c) }
 
@@ -94,9 +96,7 @@ impl<I: Iterator<Item=char>> Lexer<I> {
                     let _ = self.chars.next();
                     let m = c.to_digit(radix as u32).unwrap() as isize;
                     res = Some(match res {
-                        Some(n) =>
-                            n.checked_mul(radix as isize).unwrap()
-                                .checked_add(m).unwrap(),
+                        Some(n) => n.checked_mul(radix as isize).unwrap().checked_add(m).unwrap(),
                         None => m
                     });
                 },
@@ -115,10 +115,13 @@ impl<I: Iterator<Item=char>> Lexer<I> {
                     let _ = self.chars.next();
                     self.buf.push(c);
                 },
-                _ => return Ok(Token::Identifier(Symbol::new(state, &self.buf).unwrap_or_else(|| {
-                    state.collect_garbage();
-                    Symbol::new(state, &self.buf).unwrap()
-                })))
+                _ =>
+                    return Ok(Token::Identifier(Symbol::new(state, &self.buf).unwrap_or_else(
+                        || {
+                            state.collect_garbage();
+                            Symbol::new(state, &self.buf).unwrap()
+                        }
+                    ))),
             }
         }
     }
@@ -132,10 +135,14 @@ impl<I: Iterator<Item=char>> Lexer<I> {
             match self.peek_char() {
                 Some('"') => {
                     let _ = self.chars.next();
-                    return Ok(Token::Const(PgsString::new(state, &self.buf).unwrap_or_else(|| {
-                        state.collect_garbage();
-                        PgsString::new(state, &self.buf).unwrap()
-                    }).into()));
+                    return Ok(Token::Const(
+                        PgsString::new(state, &self.buf)
+                            .unwrap_or_else(|| {
+                                state.collect_garbage();
+                                PgsString::new(state, &self.buf).unwrap()
+                            })
+                            .into()
+                    ));
                 },
                 Some(c) => {
                     let _ = self.chars.next();
@@ -191,7 +198,7 @@ impl<I: Iterator<Item=char>> Lexer<I> {
                             Some('(') => {
                                 let _ = self.chars.next();
                                 return Some(Ok(OpenVector));
-                            }
+                            },
                             _ => unimplemented!()
                         }
                     },
@@ -225,7 +232,12 @@ mod tests {
             tokens.push(tok.unwrap());
         }
 
-        assert_eq!(tokens, vec![LParen, Const(23i16.into()), Const(Value::FALSE), Identifier(foo), RParen]);
+        assert_eq!(tokens, vec![
+            LParen,
+            Const(23i16.into()),
+            Const(Value::FALSE),
+            Identifier(foo),
+            RParen
+        ]);
     }
 }
-

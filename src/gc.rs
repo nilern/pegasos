@@ -1,14 +1,14 @@
 use std::alloc::{self, Layout};
 use std::marker::PhantomData;
-use std::mem::{size_of, align_of, swap};
+use std::mem::{align_of, size_of, swap};
 use std::ptr;
 
 // ---
 
 pub trait HeapObject: Copy {
-    type Ref: ObjectReference<Object=Self>;
+    type Ref: ObjectReference<Object = Self>;
     // type Header: ObjectHeader<Ref=Self::Ref>;
-    type Fields: Iterator<Item=*mut Self::Ref>;
+    type Fields: Iterator<Item = *mut Self::Ref>;
 
     const LAPSED: Self::Ref;
 
@@ -46,14 +46,18 @@ impl<O: HeapObject> Semispace<O> {
         let layout = Layout::from_size_align(size, Self::ALIGN).unwrap();
         let start = unsafe { alloc::alloc(layout) };
         let end = unsafe { start.add(size) }; // safe since alloc::alloc succeeded
-        Self {start, end, phantom: PhantomData}
+        Self { start, end, phantom: PhantomData }
     }
 }
 
 impl<O: HeapObject> Drop for Semispace<O> {
     fn drop(&mut self) {
         unsafe {
-            alloc::dealloc(self.start, Layout::from_size_align(self.end as usize - self.start as usize, Self::ALIGN).unwrap());
+            alloc::dealloc(
+                self.start,
+                Layout::from_size_align(self.end as usize - self.start as usize, Self::ALIGN)
+                    .unwrap()
+            );
         }
     }
 }
@@ -74,7 +78,7 @@ impl<O: HeapObject> MemoryManager<O> {
         let fromspace = Semispace::new(initial_heap / 2);
         let tospace = Semispace::new(initial_heap / 2);
         let free = tospace.start;
-        Self {max_heap, fromspace, tospace, free, grey: ptr::null_mut()}
+        Self { max_heap, fromspace, tospace, free, grey: ptr::null_mut() }
     }
 
     pub fn alloc(&mut self, base: O) -> Option<O::Ref> {
@@ -90,7 +94,9 @@ impl<O: HeapObject> MemoryManager<O> {
             unsafe { ptr::write_bytes(self.free, 0, free - self.free as usize) };
             self.free = free as *mut u8;
             let obj = (data - size_of::<O>()) as *mut O;
-            unsafe { *obj = base; }
+            unsafe {
+                *obj = base;
+            }
             Some(unsafe { O::Ref::from_ptr(obj) })
         } else {
             None
@@ -125,7 +131,9 @@ impl<O: HeapObject> MemoryManager<O> {
                     None => {
                         let res = self.alloc(*obj).unwrap(); // tospace is at least as big as fromspace
                         let new_obj = unsafe { &mut *res.as_mut_ptr().unwrap() }; // surely it is a pointer, we just allocated it
-                        unsafe { ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size()); }
+                        unsafe {
+                            ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size());
+                        }
                         *obj = unsafe { O::forwarding(new_obj.data()) };
                         res
                     }
@@ -139,7 +147,7 @@ impl<O: HeapObject> MemoryManager<O> {
         let align = align_of::<O>();
         let grey = (self.grey as usize) + (align - 1) & !(align - 1);
         let mut grey = grey as *const O;
-        
+
         while (grey as *const u8) < self.free {
             if O::is_alignment_hole(grey) {
                 grey = unsafe { grey.add(1) };
@@ -165,7 +173,7 @@ impl<O: HeapObject> MemoryManager<O> {
 pub struct Collection<'a, O: HeapObject>(&'a mut MemoryManager<O>);
 
 impl<'a, O: HeapObject> Collection<'a, O> {
-    pub unsafe fn roots<I: Iterator<Item=*mut O::Ref>>(self, roots: I) -> Self {
+    pub unsafe fn roots<I: Iterator<Item = *mut O::Ref>>(self, roots: I) -> Self {
         for root in roots {
             *root = self.0.mark(*root);
         }
@@ -177,7 +185,7 @@ impl<'a, O: HeapObject> Collection<'a, O> {
         self
     }
 
-    pub unsafe fn weaks<I: Iterator<Item=*mut O::Ref>>(self, weaks: I) {
+    pub unsafe fn weaks<I: Iterator<Item = *mut O::Ref>>(self, weaks: I) {
         for weak in weaks {
             match (*weak).as_mut_ptr() {
                 Some(oref) => match (*oref).forward() {
@@ -237,9 +245,11 @@ mod tests {
 
         const LAPSED: Self::Ref = Ref(ptr::null_mut());
 
-        fn is_alignment_hole(mem: *const Self) -> bool { Hdr::is_alignment_hole(unsafe { &(*mem).header }) }
+        fn is_alignment_hole(mem: *const Self) -> bool {
+            Hdr::is_alignment_hole(unsafe { &(*mem).header })
+        }
 
-        unsafe fn forwarding(oref: *const u8) -> Self { Self {header: Hdr::forwarding(oref)} }
+        unsafe fn forwarding(oref: *const u8) -> Self { Self { header: Hdr::forwarding(oref) } }
         fn forward(&self) -> Option<Self::Ref> { self.header.forward() }
 
         fn size(&self) -> usize { self.header.size() }
@@ -256,7 +266,9 @@ mod tests {
         type Object = Obj;
 
         unsafe fn from_ptr(ptr: *mut Self::Object) -> Self { Ref(ptr.add(1) as *mut u8) }
-        fn as_mut_ptr(self) -> Option<*mut Self::Object> { Some(unsafe { (self.0 as *mut Self::Object).offset(-1) }) }
+        fn as_mut_ptr(self) -> Option<*mut Self::Object> {
+            Some(unsafe { (self.0 as *mut Self::Object).offset(-1) })
+        }
     }
 
     impl Display for Ref {
@@ -266,14 +278,14 @@ mod tests {
     #[test]
     fn test_alloc() {
         let mut heap: MemoryManager<Obj> = MemoryManager::new(4 << 10, 1 << 20);
-        let obj = Obj {header: Hdr::from_size(32)};
+        let obj = Obj { header: Hdr::from_size(32) };
         assert!(heap.alloc(obj).is_some());
     }
 
     #[test]
     fn test_collect() {
         let mut heap: MemoryManager<Obj> = MemoryManager::new(4 << 10, 1 << 20);
-        let obj = Obj {header: Hdr::from_size(32)};
+        let obj = Obj { header: Hdr::from_size(32) };
 
         for _ in 0..10 {
             assert!(heap.alloc(obj).is_some());
@@ -281,10 +293,7 @@ mod tests {
 
         let mut roots = [heap.alloc(obj).unwrap(), heap.alloc(obj).unwrap()];
         unsafe {
-            heap.collection()
-                .roots(roots.iter_mut().map(|v| v as *mut Ref))
-                .traverse();
+            heap.collection().roots(roots.iter_mut().map(|v| v as *mut Ref)).traverse();
         }
     }
 }
-
