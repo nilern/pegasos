@@ -17,7 +17,7 @@ mod refs;
 mod state;
 mod util;
 
-use interpreter::eval;
+use interpreter::run;
 use lexer::Lexer;
 use parser::Parser;
 use state::State;
@@ -53,7 +53,7 @@ fn main() {
         let mut parser = Parser::new(Lexer::new(contents.chars()));
 
         match unsafe { parser.sexprs(&mut state, path.to_str().unwrap()) } {
-            Ok(()) => match eval(&mut state) {
+            Ok(()) => match run(&mut state) {
                 Ok(()) => {},
                 Err(err) => {
                     writeln!(stderr(), "Error loading {}: {}", path.display(), err).unwrap();
@@ -75,16 +75,14 @@ fn main() {
                 state.unwind();
                 let mut parser = Parser::new(Lexer::new(line.chars()));
                 match unsafe { parser.sexprs(&mut state, "REPL") } {
-                    Ok(()) => match eval(&mut state) {
+                    Ok(()) => match run(&mut state) {
                         Ok(()) => println!("Ack, result: {}", state.pop().unwrap()),
                         Err(err) => {
                             println!("Runtime error: {}", err);
 
                             if debug {
                                 println!("");
-                                unsafe {
-                                    state.dump(&mut stderr()).unwrap();
-                                }
+                                unsafe { state.dump(&mut stderr()).unwrap() };
                                 println!("\n");
                             }
                         }
@@ -93,8 +91,8 @@ fn main() {
                 }
             },
             Err(ReadlineError::Interrupted) => {
+                // NOTE: Not that useful while interpreter does not handle signals
                 println!("Ack, stopping.");
-                // TODO: Enable interrupting evaluation (e.g. infinite loops).
             },
             Err(ReadlineError::Eof) => {
                 println!("Ack, quitting.");

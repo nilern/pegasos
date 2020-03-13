@@ -133,8 +133,8 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         Self { head: None, chars: PosChars::new(chars.peekable()), buf: String::new() }
     }
 
-    pub unsafe fn pos(&mut self, state: &mut State) -> Pos {
-        match self.peek(state) {
+    pub fn pos(&self) -> Pos {
+        match self.head {
             Some(Ok((pos, _))) => pos,
             Some(Err(Error { at, .. })) => at,
             None => self.chars.pos()
@@ -152,23 +152,17 @@ impl<I: Iterator<Item = char>> Lexer<I> {
     }
 
     fn number(&mut self, radix: Radix) -> Result<(Pos, Token), Error> {
-        let mut res: Option<(Pos, isize)> = None;
+        let (pos, c) = self.chars.next().unwrap();
+        let mut res = c.to_digit(radix as u32).unwrap() as isize;
 
         loop {
             match self.peek_char() {
                 Some(c) if c.is_digit(radix as u32) => {
-                    let (pos, _) = self.chars.next().unwrap();
+                    let _ = self.chars.next().unwrap();
                     let m = c.to_digit(radix as u32).unwrap() as isize;
-                    res = Some(match res {
-                        Some((pos, n)) =>
-                            (pos, n.checked_mul(radix as isize).unwrap().checked_add(m).unwrap()),
-                        None => (pos, m)
-                    });
+                    res = res.checked_mul(radix as isize).unwrap().checked_add(m).unwrap();
                 },
-                _ =>
-                    return res
-                        .map(|(pos, n)| Ok((pos, Token::Const(Value::try_from(n).unwrap()))))
-                        .unwrap(),
+                _ => return Ok((pos, Token::Const(Value::try_from(res).unwrap())))
             }
         }
     }
@@ -180,7 +174,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
 
         loop {
             match self.peek_char() {
-                Some(c) if is_subsequent(c) || c == '!' => {
+                Some(c) if is_subsequent(c) => {
                     let _ = self.chars.next();
                     self.buf.push(c);
                 },
@@ -237,52 +231,47 @@ impl<I: Iterator<Item = char>> Lexer<I> {
     pub unsafe fn next(&mut self, state: &mut State) -> Option<Result<(Pos, Token), Error>> {
         use Token::*;
 
-        let head = self.head.take();
-        if head.is_some() {
-            head
-        } else {
-            loop {
-                match self.peek_char() {
-                    Some(c) if c.is_whitespace() => {
-                        let _ = self.chars.next();
-                    },
-                    Some('(') => {
-                        let (pos, _) = self.chars.next().unwrap();
-                        return Some(Ok((pos, LParen)));
-                    },
-                    Some(')') => {
-                        let (pos, _) = self.chars.next().unwrap();
-                        return Some(Ok((pos, RParen)));
-                    },
-                    Some('.') => {
-                        let (pos, _) = self.chars.next().unwrap();
-                        return Some(Ok((pos, Dot)));
-                    },
-                    Some('\'') => {
-                        let (pos, _) = self.chars.next().unwrap();
-                        return Some(Ok((pos, Quote)));
-                    },
-                    Some('"') => return Some(self.string(state)),
-                    Some('#') => {
-                        let (pos, _) = self.chars.next().unwrap();
+        self.head.take().or_else(|| loop {
+            match self.peek_char() {
+                Some(c) if c.is_whitespace() => {
+                    let _ = self.chars.next();
+                },
+                Some('(') => {
+                    let (pos, _) = self.chars.next().unwrap();
+                    break Some(Ok((pos, LParen)));
+                },
+                Some(')') => {
+                    let (pos, _) = self.chars.next().unwrap();
+                    break Some(Ok((pos, RParen)));
+                },
+                Some('.') => {
+                    let (pos, _) = self.chars.next().unwrap();
+                    break Some(Ok((pos, Dot)));
+                },
+                Some('\'') => {
+                    let (pos, _) = self.chars.next().unwrap();
+                    break Some(Ok((pos, Quote)));
+                },
+                Some('"') => break Some(self.string(state)),
+                Some('#') => {
+                    let (pos, _) = self.chars.next().unwrap();
 
-                        match self.peek_char() {
-                            Some('t') => return Some(self.boolean(pos)),
-                            Some('f') => return Some(self.boolean(pos)),
-                            Some('(') => {
-                                let _ = self.chars.next().unwrap();
-                                return Some(Ok((pos, OpenVector)));
-                            },
-                            _ => unimplemented!()
-                        }
-                    },
-                    Some(c) if c.is_digit(10) => return Some(self.number(Radix::Decimal)),
-                    Some(c) if is_initial(c) => return Some(self.identifier(state)),
-                    None => return None,
-                    _ => unimplemented!()
-                }
+                    match self.peek_char() {
+                        Some('t') => break Some(self.boolean(pos)),
+                        Some('f') => break Some(self.boolean(pos)),
+                        Some('(') => {
+                            let _ = self.chars.next().unwrap();
+                            break Some(Ok((pos, OpenVector)));
+                        },
+                        _ => unimplemented!()
+                    }
+                },
+                Some(c) if c.is_digit(10) => break Some(self.number(Radix::Decimal)),
+                Some(c) if is_initial(c) => break Some(self.identifier(state)),
+                None => break None,
+                _ => unimplemented!()
             }
-        }
+        })
     }
 }
 

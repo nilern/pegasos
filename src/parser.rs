@@ -22,6 +22,12 @@ pub struct Error {
     at: Loc
 }
 
+impl Error {
+    fn from_lex(lex_err: lexer::Error, source: Value) -> Self {
+        Self { what: ErrorWhat::Lex(lex_err), at: Loc { source, pos: lex_err.at } }
+    }
+}
+
 #[derive(Debug)]
 pub enum ErrorWhat {
     Lex(lexer::Error),
@@ -82,7 +88,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                                         what: ErrorWhat::Eof,
                                         at: Loc {
                                             source: state.get(count).unwrap(),
-                                            pos: self.lexer.pos(state)
+                                            pos: self.lexer.pos()
                                         }
                                     }),
                                 res @ Err(_) => break res
@@ -96,19 +102,13 @@ impl<I: Iterator<Item = char>> Parser<I> {
                                         at: Loc { source: state.get(count).unwrap(), pos }
                                     }),
                                 Some(Err(lex_err)) =>
-                                    break Err(Error {
-                                        what: ErrorWhat::Lex(lex_err),
-                                        at: Loc {
-                                            source: state.get(count).unwrap(),
-                                            pos: lex_err.at
-                                        }
-                                    }),
+                                    break Err(Error::from_lex(lex_err, state.get(count).unwrap())),
                                 None =>
                                     break Err(Error {
                                         what: ErrorWhat::Eof,
                                         at: Loc {
                                             source: state.get(count).unwrap(),
-                                            pos: self.lexer.pos(state)
+                                            pos: self.lexer.pos()
                                         }
                                     }),
                             }
@@ -116,10 +116,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                             break Ok(Some(()));
                         },
                         Some(Err(lex_err)) =>
-                            break Err(Error {
-                                what: ErrorWhat::Lex(lex_err),
-                                at: Loc { source: state.get(count).unwrap(), pos: lex_err.at }
-                            }),
+                            break Err(Error::from_lex(lex_err, state.get(count).unwrap())),
                         Some(_) => {
                             state.push(state.get(count).unwrap()); // { source datum{count} source }
 
@@ -130,7 +127,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                                         what: ErrorWhat::Eof,
                                         at: Loc {
                                             source: state.get(count).unwrap(),
-                                            pos: self.lexer.pos(state)
+                                            pos: self.lexer.pos()
                                         }
                                     }),
                                 res @ Err(_) => break res
@@ -141,7 +138,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                                 what: ErrorWhat::Eof,
                                 at: Loc {
                                     source: state.get(count).unwrap(),
-                                    pos: self.lexer.pos(state)
+                                    pos: self.lexer.pos()
                                 }
                             }),
                     }
@@ -180,10 +177,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                             break Ok(Some(()));
                         },
                         Some(Err(lex_err)) =>
-                            break Err(Error {
-                                what: ErrorWhat::Lex(lex_err),
-                                at: Loc { source: state.get(len).unwrap(), pos: lex_err.at }
-                            }),
+                            break Err(Error::from_lex(lex_err, state.get(len).unwrap())),
                         Some(_) => {
                             state.push(state.get(len).unwrap()); // { source datum{len} source }
 
@@ -194,7 +188,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                                         what: ErrorWhat::Eof,
                                         at: Loc {
                                             source: state.get(len).unwrap(),
-                                            pos: self.lexer.pos(state)
+                                            pos: self.lexer.pos()
                                         }
                                     }),
                                 res @ Err(_) => break res
@@ -203,10 +197,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                         None =>
                             break Err(Error {
                                 what: ErrorWhat::Eof,
-                                at: Loc {
-                                    source: state.get(len).unwrap(),
-                                    pos: self.lexer.pos(state)
-                                }
+                                at: Loc { source: state.get(len).unwrap(), pos: self.lexer.pos() }
                             }),
                     }
                 };
@@ -233,7 +224,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                     Ok(None) =>
                         return Err(Error {
                             what: ErrorWhat::Eof,
-                            at: Loc { source: state.pop().unwrap(), pos: self.lexer.pos(state) }
+                            at: Loc { source: state.pop().unwrap(), pos: self.lexer.pos() }
                         }),
                     res @ Err(_) => {
                         state.pop().unwrap();
@@ -269,10 +260,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 } else {
                     unreachable!()
                 },
-            Some(Err(lex_err)) => Err(Error {
-                what: ErrorWhat::Lex(lex_err),
-                at: Loc { source: state.pop().unwrap(), pos: lex_err.at }
-            }),
+            Some(Err(lex_err)) => Err(Error::from_lex(lex_err, state.pop().unwrap())),
             Some(_) => unimplemented!(),
             None => {
                 state.pop().unwrap();

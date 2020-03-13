@@ -102,22 +102,16 @@ impl Display for UnpackedHeapValue {
             },
             UnpackedHeapValue::String(s) => s.fmt(f),
             UnpackedHeapValue::Symbol(s) => s.fmt(f),
-            UnpackedHeapValue::Pair(mut p) => {
-                "(".fmt(f)?;
+            UnpackedHeapValue::Pair(p) => {
+                write!(f, "({}", p.car)?;
 
-                loop {
-                    p.car.fmt(f)?;
-
-                    if let Ok(cdr) = Pair::try_from(p.cdr) {
-                        " ".fmt(f)?;
-                        p = cdr;
-                    } else {
-                        break;
-                    }
+                let mut cars = Cars::of(p.cdr);
+                for elem in &mut cars {
+                    write!(f, " {}", elem)?;
                 }
 
-                if p.cdr != Value::NIL {
-                    write!(f, " . {}", p.cdr)?;
+                if cars.remainder() != Value::NIL {
+                    write!(f, " . {}", cars.remainder())?;
                 }
 
                 ")".fmt(f)
