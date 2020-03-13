@@ -65,6 +65,8 @@ pub enum Op {
     Stop
 }
 
+pub type Primitive = fn(&mut State) -> Result<Op, PgsError>;
+
 pub fn run(state: &mut State) -> Result<(), PgsError> {
     let mut op = Op::Eval;
     let expr = state.pop().unwrap();
@@ -670,7 +672,7 @@ fn apply(state: &mut State) -> Result<Op, PgsError> {
                 },
                 _ => unreachable!()
             },
-            Err(_) => unimplemented!()
+            Err(_) => unsafe { transmute::<usize, Primitive>(callee.code)(state) }
         }
     } else {
         state.raise(RuntimeError::Uncallable(state.get(arg_count + 1).unwrap()))
@@ -712,7 +714,7 @@ mod tests {
 
     #[test]
     fn test_variables() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 13, 1 << 20); // HACK: bigger heap since it grow not
 
         let mut parser = Parser::new(Lexer::new("(define foo 5)".chars()));
         unsafe { parser.sexprs(&mut state, "test").unwrap() };

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use super::error::PgsError;
 use super::gc::MemoryManager;
-use super::interpreter::RuntimeError;
+use super::interpreter::{RuntimeError, Op, Primitive};
 use super::objects::{
     Bindings, Cars, Closure, Object, Pair, PgsString, Symbol, SymbolTable, Syntax, Vector
 };
@@ -43,6 +43,22 @@ impl State {
             for _ in path {
                 res.cons();
             }
+            res.define();
+
+            res.push_symbol("null?");
+            res.push_primitive(is_null);
+            res.define();
+
+            res.push_symbol("%length");
+            res.push_primitive(object_length);
+            res.define();
+
+            res.push_symbol("make-vector");
+            res.push_primitive(make_vector);
+            res.define();
+
+            res.push_symbol("fx<?");
+            res.push_primitive(fx_lt);
             res.define();
         }
 
@@ -121,6 +137,14 @@ impl State {
         self.push(pair);
     }
 
+    pub unsafe fn push_vector(&mut self, len: usize) {
+        let mut vec = Vector::new(self, len).unwrap_or_else(|| {
+            self.collect_garbage();
+            Vector::new(self, len).unwrap()
+        });
+        self.push(vec);
+    }
+
     pub unsafe fn vector(&mut self, len: usize) {
         debug_assert!(self.stack.len() >= len);
 
@@ -143,6 +167,15 @@ impl State {
         f.clovers_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(f.into())
+    }
+
+    pub unsafe fn push_primitive(&mut self, code: Primitive) {
+        let code = code as usize;
+        let f = Closure::new(self, code, 0).unwrap_or_else(|| {
+            self.collect_garbage();
+            Closure::new(self, code, 0).unwrap()
+        });
+        self.push(f);
     }
 
     pub unsafe fn push_syntax(&mut self, loc: Loc) {
@@ -336,6 +369,91 @@ impl<'a> Iterator for Frames<'a> {
         } else {
             None
         }
+    }
+}
+
+fn is_null(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.pop().unwrap().try_into().unwrap();
+
+    if argc == 1 {
+        let v = state.pop().unwrap();
+        state.pop().unwrap(); // callee
+        state.push(v == Value::NIL);
+        state.push(1u16);
+        Ok(Op::Continue)
+    } else {
+        Err(RuntimeError::Argc {
+            callee: state.get(argc).unwrap(),
+            params: (1, false),
+            got: argc
+        }.into())
+    }
+}
+
+fn object_length(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.pop().unwrap().try_into().unwrap();
+
+    if argc == 1 {
+        if let Ok(oref) = HeapValue::<()>::try_from(state.pop().unwrap()) {
+            state.pop().unwrap(); // callee
+            state.push(Value::try_from(unsafe { (*oref.as_ptr()).len() }).unwrap());
+            state.push(1u16);
+            Ok(Op::Continue)
+        } else {
+            unimplemented!()
+        }
+    } else {
+        Err(RuntimeError::Argc {
+            callee: state.get(argc).unwrap(),
+            params: (1, false),
+            got: argc
+        }.into())
+    }
+}
+
+fn make_vector(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.pop().unwrap().try_into().unwrap();
+
+    if argc == 1 {
+        if let Ok(len) = state.pop().unwrap().try_into() {
+            state.pop().unwrap(); // callee
+            unsafe { state.push_vector(len) };
+            state.push(1u16);
+            Ok(Op::Continue)
+        } else {
+            unimplemented!()
+        }
+    } else {
+        Err(RuntimeError::Argc {
+            callee: state.get(argc).unwrap(),
+            params: (1, false),
+            got: argc
+        }.into())
+    }
+}
+
+fn fx_lt(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.pop().unwrap().try_into().unwrap();
+
+    if argc == 2 {
+        if let Ok(a) = state.pop().unwrap().try_into() {
+            if let Ok(b) = state.pop().unwrap().try_into() {
+                state.pop().unwrap(); // callee
+                state.push(isize::lt(&b, &a)); // OPTIMIZE
+                state.push(1u16);
+                Ok(Op::Continue)
+            } else {
+                unimplemented!()
+            }
+        } else {
+            unimplemented!()
+        }
+    } else {
+        Err(RuntimeError::Argc {
+            callee: state.get(argc).unwrap(),
+            params: (2, false),
+            got: argc
+        }.into())
     }
 }
 
