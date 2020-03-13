@@ -52,20 +52,17 @@ fn main() {
         });
         let mut parser = Parser::new(Lexer::new(contents.chars()));
 
-        loop {
-            match unsafe { parser.sexpr(&mut state) } {
-                Ok(Some(())) => match eval(&mut state) {
-                    Ok(()) => {},
-                    Err(err) => {
-                        writeln!(stderr(), "Error loading {}: {}", path.display(), err).unwrap();
-                        exit(1);
-                    }
-                },
-                Ok(None) => break,
+        match unsafe { parser.sexprs(&mut state, path.to_str().unwrap()) } {
+            Ok(()) => match eval(&mut state) {
+                Ok(()) => {},
                 Err(err) => {
                     writeln!(stderr(), "Error loading {}: {}", path.display(), err).unwrap();
                     exit(1);
                 }
+            },
+            Err(err) => {
+                writeln!(stderr(), "Error reading {}: {}", path.display(), err).unwrap();
+                exit(1);
             }
         }
     }
@@ -77,8 +74,8 @@ fn main() {
 
                 state.unwind();
                 let mut parser = Parser::new(Lexer::new(line.chars()));
-                match unsafe { parser.sexpr(&mut state) } {
-                    Ok(Some(())) => match eval(&mut state) {
+                match unsafe { parser.sexprs(&mut state, "REPL") } {
+                    Ok(()) => match eval(&mut state) {
                         Ok(()) => println!("Ack, result: {}", state.pop().unwrap()),
                         Err(err) => {
                             println!("Runtime error: {}", err);
@@ -92,7 +89,6 @@ fn main() {
                             }
                         }
                     },
-                    Ok(None) => {},
                     Err(err) => println!("Parse error: {}", err)
                 }
             },

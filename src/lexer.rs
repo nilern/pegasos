@@ -7,7 +7,13 @@ use super::refs::Value;
 use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
-pub enum Error {
+pub struct Error {
+    pub what: ErrorWhat,
+    pub at: Pos
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ErrorWhat {
     Eof
 }
 
@@ -44,6 +50,56 @@ impl Display for Token {
 
 // ---
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pos {
+    pub line: usize,
+    pub column: usize
+}
+
+impl Default for Pos {
+    fn default() -> Self { Self { line: 1, column: 1 } }
+}
+
+impl Display for Pos {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}:{}", self.line, self.column) }
+}
+
+// ---
+
+struct PosChars<I: Iterator<Item = char>> {
+    inner: Peekable<I>,
+    pos: Pos
+}
+
+impl<I: Iterator<Item = char>> PosChars<I> {
+    fn new(inner: Peekable<I>) -> Self { Self { inner, pos: Pos::default() } }
+
+    fn peek(&mut self) -> Option<(Pos, char)> {
+        let pos = self.pos;
+        self.inner.peek().map(|&c| (pos, c))
+    }
+
+    fn pos(&self) -> Pos { self.pos }
+}
+
+impl<I: Iterator<Item = char>> Iterator for PosChars<I> {
+    type Item = (Pos, char);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|c| {
+            let pos = self.pos;
+            self.pos = if c == '\n' {
+                Pos { line: pos.line + 1, column: 1 }
+            } else {
+                Pos { column: pos.column + 1, ..pos }
+            };
+            (pos, c)
+        })
+    }
+}
+
+// ---
+
 #[derive(Clone, Copy)]
 enum Radix {
     Binary = 0b10,
@@ -67,47 +123,60 @@ fn is_subsequent(c: char) -> bool {
 // ---
 
 pub struct Lexer<I: Iterator<Item = char>> {
-    head: Option<Result<Token, Error>>,
-    chars: Peekable<I>,
+    head: Option<Result<(Pos, Token), Error>>,
+    chars: PosChars<I>,
     buf: String
 }
 
 impl<I: Iterator<Item = char>> Lexer<I> {
     pub fn new(chars: I) -> Self {
-        Self { head: None, chars: chars.peekable(), buf: String::new() }
+        Self { head: None, chars: PosChars::new(chars.peekable()), buf: String::new() }
     }
 
-    fn peek_char(&mut self) -> Option<char> { self.chars.peek().map(|&c| c) }
+    pub unsafe fn pos(&mut self, state: &mut State) -> Pos {
+        match self.peek(state) {
+            Some(Ok((pos, _))) => pos,
+            Some(Err(Error { at, .. })) => at,
+            None => self.chars.pos()
+        }
+    }
 
-    fn boolean(&mut self) -> Result<Token, Error> {
+    fn peek_char(&mut self) -> Option<char> { self.chars.peek().map(|c| c.1) }
+
+    fn boolean(&mut self, pos: Pos) -> Result<(Pos, Token), Error> {
         match self.chars.next() {
-            Some('t') => return Ok(Token::Const(Value::TRUE)),
-            Some('f') => return Ok(Token::Const(Value::FALSE)),
+            Some((_, 't')) => return Ok((pos, Token::Const(Value::TRUE))),
+            Some((_, 'f')) => return Ok((pos, Token::Const(Value::FALSE))),
             _ => unreachable!()
         }
     }
 
-    fn number(&mut self, radix: Radix) -> Result<Token, Error> {
-        let mut res: Option<isize> = None;
+    fn number(&mut self, radix: Radix) -> Result<(Pos, Token), Error> {
+        let mut res: Option<(Pos, isize)> = None;
 
         loop {
             match self.peek_char() {
                 Some(c) if c.is_digit(radix as u32) => {
-                    let _ = self.chars.next();
+                    let (pos, _) = self.chars.next().unwrap();
                     let m = c.to_digit(radix as u32).unwrap() as isize;
                     res = Some(match res {
-                        Some(n) => n.checked_mul(radix as isize).unwrap().checked_add(m).unwrap(),
-                        None => m
+                        Some((pos, n)) =>
+                            (pos, n.checked_mul(radix as isize).unwrap().checked_add(m).unwrap()),
+                        None => (pos, m)
                     });
                 },
-                _ => return Ok(Token::Const(Value::try_from(res.unwrap()).unwrap()))
+                _ =>
+                    return res
+                        .map(|(pos, n)| Ok((pos, Token::Const(Value::try_from(n).unwrap()))))
+                        .unwrap(),
             }
         }
     }
 
-    unsafe fn identifier(&mut self, state: &mut State) -> Result<Token, Error> {
+    unsafe fn identifier(&mut self, state: &mut State) -> Result<(Pos, Token), Error> {
+        let (pos, initial) = self.chars.next().unwrap(); // already checked that `is_initial`
         self.buf.clear();
-        self.buf.push(self.chars.next().unwrap()); // first char, already checked
+        self.buf.push(initial);
 
         loop {
             match self.peek_char() {
@@ -116,18 +185,19 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                     self.buf.push(c);
                 },
                 _ =>
-                    return Ok(Token::Identifier(Symbol::new(state, &self.buf).unwrap_or_else(
-                        || {
+                    return Ok((
+                        pos,
+                        Token::Identifier(Symbol::new(state, &self.buf).unwrap_or_else(|| {
                             state.collect_garbage();
                             Symbol::new(state, &self.buf).unwrap()
-                        }
-                    ))),
+                        }))
+                    )),
             }
         }
     }
 
-    unsafe fn string(&mut self, state: &mut State) -> Result<Token, Error> {
-        let _ = self.chars.next(); // must be '"', skip it
+    unsafe fn string(&mut self, state: &mut State) -> Result<(Pos, Token), Error> {
+        let (pos, _) = self.chars.next().unwrap(); // must be '"', skip it
 
         self.buf.clear();
 
@@ -135,25 +205,28 @@ impl<I: Iterator<Item = char>> Lexer<I> {
             match self.peek_char() {
                 Some('"') => {
                     let _ = self.chars.next();
-                    return Ok(Token::Const(
-                        PgsString::new(state, &self.buf)
-                            .unwrap_or_else(|| {
-                                state.collect_garbage();
-                                PgsString::new(state, &self.buf).unwrap()
-                            })
-                            .into()
+                    return Ok((
+                        pos,
+                        Token::Const(
+                            PgsString::new(state, &self.buf)
+                                .unwrap_or_else(|| {
+                                    state.collect_garbage();
+                                    PgsString::new(state, &self.buf).unwrap()
+                                })
+                                .into()
+                        )
                     ));
                 },
                 Some(c) => {
                     let _ = self.chars.next();
                     self.buf.push(c);
                 },
-                None => return Err(Error::Eof)
+                None => return Err(Error { what: ErrorWhat::Eof, at: pos })
             }
         }
     }
 
-    pub unsafe fn peek(&mut self, state: &mut State) -> Option<Result<Token, Error>> {
+    pub unsafe fn peek(&mut self, state: &mut State) -> Option<Result<(Pos, Token), Error>> {
         if self.head.is_none() {
             self.head = self.next(state);
         }
@@ -161,7 +234,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         self.head
     }
 
-    pub unsafe fn next(&mut self, state: &mut State) -> Option<Result<Token, Error>> {
+    pub unsafe fn next(&mut self, state: &mut State) -> Option<Result<(Pos, Token), Error>> {
         use Token::*;
 
         let head = self.head.take();
@@ -174,30 +247,31 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                         let _ = self.chars.next();
                     },
                     Some('(') => {
-                        let _ = self.chars.next();
-                        return Some(Ok(LParen));
+                        let (pos, _) = self.chars.next().unwrap();
+                        return Some(Ok((pos, LParen)));
                     },
                     Some(')') => {
-                        let _ = self.chars.next();
-                        return Some(Ok(RParen));
+                        let (pos, _) = self.chars.next().unwrap();
+                        return Some(Ok((pos, RParen)));
                     },
                     Some('.') => {
-                        let _ = self.chars.next();
-                        return Some(Ok(Dot));
+                        let (pos, _) = self.chars.next().unwrap();
+                        return Some(Ok((pos, Dot)));
                     },
                     Some('\'') => {
-                        let _ = self.chars.next();
-                        return Some(Ok(Quote));
+                        let (pos, _) = self.chars.next().unwrap();
+                        return Some(Ok((pos, Quote)));
                     },
                     Some('"') => return Some(self.string(state)),
                     Some('#') => {
-                        let _ = self.chars.next();
+                        let (pos, _) = self.chars.next().unwrap();
+
                         match self.peek_char() {
-                            Some('t') => return Some(self.boolean()),
-                            Some('f') => return Some(self.boolean()),
+                            Some('t') => return Some(self.boolean(pos)),
+                            Some('f') => return Some(self.boolean(pos)),
                             Some('(') => {
-                                let _ = self.chars.next();
-                                return Some(Ok(OpenVector));
+                                let _ = self.chars.next().unwrap();
+                                return Some(Ok((pos, OpenVector)));
                             },
                             _ => unimplemented!()
                         }
@@ -223,21 +297,21 @@ mod tests {
         let mut state = State::new(&[], 1 << 12, 1 << 20);
         let foo: Symbol = Symbol::new(&mut state, "foo").unwrap();
 
-        let input = "  (23 #f foo )  ";
+        let input = "  (23 #f\n foo )  ";
         let mut lexer = Lexer::new(input.chars());
 
         let mut tokens = Vec::new();
 
-        while let Some(tok) = unsafe { lexer.next(&mut state) } {
-            tokens.push(tok.unwrap());
+        while let Some(res) = unsafe { lexer.next(&mut state) } {
+            tokens.push(res.unwrap());
         }
 
         assert_eq!(tokens, vec![
-            LParen,
-            Const(23i16.into()),
-            Const(Value::FALSE),
-            Identifier(foo),
-            RParen
+            (Pos { line: 1, column: 3 }, LParen),
+            (Pos { line: 1, column: 4 }, Const(23i16.into())),
+            (Pos { line: 1, column: 7 }, Const(Value::FALSE)),
+            (Pos { line: 2, column: 2 }, Identifier(foo)),
+            (Pos { line: 2, column: 6 }, RParen)
         ]);
     }
 }

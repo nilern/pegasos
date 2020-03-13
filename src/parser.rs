@@ -1,27 +1,47 @@
 use std::convert::TryInto;
 use std::fmt::{self, Display, Formatter};
 
-use super::lexer::{self, Lexer, Token};
-use super::objects::{Pair, Symbol, Vector};
+use super::lexer::{self, Lexer, Pos, Token};
+use super::objects::Pair;
 use super::refs::Value;
 use super::state::State;
 
+#[derive(Debug, Clone, Copy)]
+pub struct Loc {
+    pub source: Value,
+    pub pos: Pos
+}
+
+impl Display for Loc {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}:{}", self.source, self.pos) }
+}
+
 #[derive(Debug)]
-pub enum Error {
+pub struct Error {
+    what: ErrorWhat,
+    at: Loc
+}
+
+#[derive(Debug)]
+pub enum ErrorWhat {
     Lex(lexer::Error),
     Expected { expected: lexer::Token, actual: lexer::Token },
     Eof
 }
 
-impl Display for Error {
+impl Display for ErrorWhat {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Error::Lex(lex_err) => write!(f, "Lexical error: {}.", lex_err),
-            Error::Expected { expected, actual } =>
+            ErrorWhat::Lex(lex_err) => write!(f, "Lexical error: {}.", lex_err),
+            ErrorWhat::Expected { expected, actual } =>
                 write!(f, "Was expecting '{}' but got '{}'.", expected, actual),
-            Error::Eof => write!(f, "Incomplete datum, input ran out.")
+            ErrorWhat::Eof => write!(f, "Incomplete datum, input ran out.")
         }
     }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{} at {}", self.what, self.at) }
 }
 
 pub struct Parser<I: Iterator<Item = char>> {
@@ -31,130 +51,290 @@ pub struct Parser<I: Iterator<Item = char>> {
 impl<I: Iterator<Item = char>> Parser<I> {
     pub fn new(lexer: Lexer<I>) -> Self { Self { lexer } }
 
-    pub unsafe fn sexpr(&mut self, state: &mut State) -> Result<Option<()>, Error> {
+    /// { source -- datum }
+    unsafe fn sexpr(&mut self, state: &mut State) -> Result<Option<()>, Error> {
         use Token::*;
 
         match self.lexer.peek(state) {
-            Some(Ok(LParen)) => {
+            Some(Ok((pos, LParen))) => {
                 let _ = self.lexer.next(state);
-                let mut len = 0;
+                let mut count = 0;
+                let mut proper = true;
 
-                loop {
+                let res = loop {
+                    // { source datum{count} }
                     match self.lexer.peek(state) {
-                        Some(Ok(RParen)) => {
+                        Some(Ok((_, RParen))) => {
                             let _ = self.lexer.next(state);
-
-                            state.push(Value::NIL);
-                            for _ in 0..len {
-                                state.cons();
-                            }
-                            return Ok(Some(()));
+                            break Ok(Some(()));
                         },
-                        Some(Ok(Dot)) => {
+                        Some(Ok((_, Dot))) => {
                             let _ = self.lexer.next(state);
+                            state.push(state.get(count).unwrap()); // { source datum{count} source }
 
-                            self.sexpr(state).and_then(|v| v.ok_or(Error::Eof))?;
+                            match self.sexpr(state) {
+                                Ok(Some(())) => {
+                                    count += 1;
+                                    proper = false;
+                                },
+                                Ok(None) =>
+                                    break Err(Error {
+                                        what: ErrorWhat::Eof,
+                                        at: Loc {
+                                            source: state.get(count).unwrap(),
+                                            pos: self.lexer.pos(state)
+                                        }
+                                    }),
+                                res @ Err(_) => break res
+                            } // { source datum{count} }
+
                             match self.lexer.next(state) {
-                                Some(Ok(RParen)) => {},
-                                Some(Ok(actual)) =>
-                                    return Err(Error::Expected { expected: RParen, actual }),
-                                Some(Err(lex_err)) => return Err(Error::Lex(lex_err)),
-                                None => return Err(Error::Eof)
+                                Some(Ok((_, RParen))) => {},
+                                Some(Ok((pos, actual))) =>
+                                    break Err(Error {
+                                        what: ErrorWhat::Expected { expected: RParen, actual },
+                                        at: Loc { source: state.get(count).unwrap(), pos }
+                                    }),
+                                Some(Err(lex_err)) =>
+                                    break Err(Error {
+                                        what: ErrorWhat::Lex(lex_err),
+                                        at: Loc {
+                                            source: state.get(count).unwrap(),
+                                            pos: lex_err.at
+                                        }
+                                    }),
+                                None =>
+                                    break Err(Error {
+                                        what: ErrorWhat::Eof,
+                                        at: Loc {
+                                            source: state.get(count).unwrap(),
+                                            pos: self.lexer.pos(state)
+                                        }
+                                    }),
                             }
 
-                            for _ in 0..len {
-                                state.cons();
-                            }
-                            return Ok(Some(()));
+                            break Ok(Some(()));
                         },
-                        Some(Err(lex_err)) => return Err(Error::Lex(lex_err)),
+                        Some(Err(lex_err)) =>
+                            break Err(Error {
+                                what: ErrorWhat::Lex(lex_err),
+                                at: Loc { source: state.get(count).unwrap(), pos: lex_err.at }
+                            }),
                         Some(_) => {
-                            self.sexpr(state).and_then(|v| v.ok_or(Error::Eof))?;
-                            len += 1;
+                            state.push(state.get(count).unwrap()); // { source datum{count} source }
+
+                            match self.sexpr(state) {
+                                Ok(Some(())) => count += 1,
+                                Ok(None) =>
+                                    break Err(Error {
+                                        what: ErrorWhat::Eof,
+                                        at: Loc {
+                                            source: state.get(count).unwrap(),
+                                            pos: self.lexer.pos(state)
+                                        }
+                                    }),
+                                res @ Err(_) => break res
+                            }
                         },
-                        None => return Err(Error::Eof)
+                        None =>
+                            break Err(Error {
+                                what: ErrorWhat::Eof,
+                                at: Loc {
+                                    source: state.get(count).unwrap(),
+                                    pos: self.lexer.pos(state)
+                                }
+                            }),
+                    }
+                }; // { source datum{count} }
+
+                match res {
+                    Ok(_) => {
+                        if proper {
+                            state.push(Value::NIL);
+                        } else {
+                            count -= 1;
+                        }
+                        for _ in 0..count {
+                            state.cons();
+                        }
+                        let loc = Loc { source: state.remove(1).unwrap(), pos }; // { datum }
+                        state.push_syntax(loc); // { syntax }
+                    },
+                    Err(_) => {
+                        for _ in 0..count + 1 {
+                            state.pop().unwrap();
+                        } // { }
                     }
                 }
+
+                res
             },
-            Some(Ok(OpenVector)) => {
+            Some(Ok((pos, OpenVector))) => {
                 let _ = self.lexer.next(state);
                 let mut len = 0;
 
-                loop {
+                let res = loop {
                     match self.lexer.peek(state) {
-                        Some(Ok(RParen)) => {
+                        Some(Ok((_, RParen))) => {
                             let _ = self.lexer.next(state);
-                            state.vector(len);
-                            return Ok(Some(()));
+                            break Ok(Some(()));
                         },
-                        Some(Err(lex_err)) => return Err(Error::Lex(lex_err)),
+                        Some(Err(lex_err)) =>
+                            break Err(Error {
+                                what: ErrorWhat::Lex(lex_err),
+                                at: Loc { source: state.get(len).unwrap(), pos: lex_err.at }
+                            }),
                         Some(_) => {
-                            self.sexpr(state).and_then(|v| v.ok_or(Error::Eof))?;
-                            len += 1;
+                            state.push(state.get(len).unwrap()); // { source datum{len} source }
+
+                            match self.sexpr(state) {
+                                Ok(Some(())) => len += 1,
+                                Ok(None) =>
+                                    break Err(Error {
+                                        what: ErrorWhat::Eof,
+                                        at: Loc {
+                                            source: state.get(len).unwrap(),
+                                            pos: self.lexer.pos(state)
+                                        }
+                                    }),
+                                res @ Err(_) => break res
+                            }
                         },
-                        None => return Err(Error::Eof)
+                        None =>
+                            break Err(Error {
+                                what: ErrorWhat::Eof,
+                                at: Loc {
+                                    source: state.get(len).unwrap(),
+                                    pos: self.lexer.pos(state)
+                                }
+                            }),
                     }
+                };
+
+                match res {
+                    Ok(_) => {
+                        state.vector(len); // { source datum }
+                        let loc = Loc { source: state.remove(1).unwrap(), pos }; // { datum }
+                        state.push_syntax(loc); // { syntax }
+                    },
+                    Err(_) =>
+                        for _ in 0..len + 1 {
+                            state.pop().unwrap();
+                        }, // { }
                 }
+
+                res
             },
-            Some(Ok(Quote)) => {
+            Some(Ok((pos, Quote))) => {
                 let _ = self.lexer.next(state);
-                state.push_symbol("quote");
-                self.sexpr(state).and_then(|v| v.ok_or(Error::Eof))?;
-                state.push(Value::NIL);
+                state.dup(); // { source source }
+                match self.sexpr(state) {
+                    Ok(Some(())) => {},
+                    Ok(None) =>
+                        return Err(Error {
+                            what: ErrorWhat::Eof,
+                            at: Loc { source: state.pop().unwrap(), pos: self.lexer.pos(state) }
+                        }),
+                    res @ Err(_) => {
+                        state.pop().unwrap();
+                        return res;
+                    }
+                } // { source datum }
+                state.push_symbol("quote"); // { source datum 'quote }
+                let loc = Loc { source: state.get(2).unwrap(), pos };
+                state.push_syntax(loc); // { source datum #'quote }
+                state.swap(); // { source 'quote datum }
+                state.push(Value::NIL); // { source 'quote datum '() }
                 state.cons();
                 state.cons();
+                let loc = Loc { source: state.remove(1).unwrap(), pos }; // { datum }
+                state.push_syntax(loc); // { syntax }
                 Ok(Some(()))
             },
-            Some(Ok(Identifier(_))) =>
-                if let Some(Ok(Identifier(sym))) = self.lexer.next(state) {
+            Some(Ok((_, Identifier(_)))) =>
+                if let Some(Ok((pos, Identifier(sym)))) = self.lexer.next(state) {
+                    let loc = Loc { source: state.pop().unwrap(), pos };
                     state.push(sym);
+                    state.push_syntax(loc);
                     Ok(Some(()))
                 } else {
                     unreachable!()
                 },
-            Some(Ok(Const(_))) =>
-                if let Some(Ok(Const(v))) = self.lexer.next(state) {
+            Some(Ok((_, Const(_)))) =>
+                if let Some(Ok((pos, Const(v)))) = self.lexer.next(state) {
+                    let loc = Loc { source: state.pop().unwrap(), pos };
                     state.push(v);
+                    state.push_syntax(loc);
                     Ok(Some(()))
                 } else {
                     unreachable!()
                 },
-            Some(Err(lex_err)) => Err(Error::Lex(lex_err)),
+            Some(Err(lex_err)) => Err(Error {
+                what: ErrorWhat::Lex(lex_err),
+                at: Loc { source: state.pop().unwrap(), pos: lex_err.at }
+            }),
             Some(_) => unimplemented!(),
-            None => Ok(None)
+            None => {
+                state.pop().unwrap();
+                Ok(None)
+            }
         }
     }
 
-    pub unsafe fn sexprs(&mut self, state: &mut State) -> Result<(), Error> {
+    pub unsafe fn sexprs(&mut self, state: &mut State, source: &str) -> Result<(), Error> {
         let mut nonempty = false;
+        state.push_string(source); // { source }
+        state.dup(); // { source source }
 
         loop {
-            match self.sexpr(state)? {
-                Some(()) => {
+            // { source (data prev)? source }
+            match self.sexpr(state) {
+                Ok(Some(())) => {
+                    // { source (data prev)? datum }
                     let mut pair = Pair::new(state).unwrap_or_else(|| {
                         state.collect_garbage();
                         Pair::new(state).unwrap()
                     });
 
-                    let parsed = state.pop().unwrap();
+                    let parsed = state.pop().unwrap(); // { source (data prev)? }
                     if nonempty {
+                        // { source data prev }
                         let mut prev: Pair = state.pop().unwrap().try_into().unwrap();
                         prev.cdr = pair.into();
                     } else {
+                        // { source }
                         state.push(pair);
                         nonempty = true;
-                    }
+                    } // { source data }
                     pair.car = parsed;
-                    state.push(pair);
+                    state.push(pair); // { source data prev }
+                    state.push(state.get(2).unwrap()); // { source data prev source }
                 },
-                None => {
+                Ok(None) => {
                     if nonempty {
+                        // { source data prev }
                         let mut pair: Pair = state.pop().unwrap().try_into().unwrap();
                         pair.cdr = Value::NIL;
                     } else {
+                        // { source }
                         state.push(Value::NIL);
-                    }
+                    } // { source data }
+                    state.push_symbol("begin"); // { source data 'begin }
+                    let loc = Loc { source: state.get(2).unwrap(), pos: Pos::default() };
+                    state.push_syntax(loc); // { source data #'begin }
+                    state.swap();
+                    state.cons();
+                    let loc = Loc { source: state.remove(1).unwrap(), pos: Pos::default() }; // { data }
+                    state.push_syntax(loc);
                     return Ok(());
+                },
+                Err(err) => {
+                    if nonempty {
+                        state.pop().unwrap(); // prev
+                        state.pop().unwrap(); // data
+                    }
+                    state.pop().unwrap(); // source
+                    return Err(err);
                 }
             }
         }
@@ -165,16 +345,22 @@ impl<I: Iterator<Item = char>> Parser<I> {
 mod tests {
     use super::*;
 
-    use std::convert::TryInto;
+    use std::convert::{TryFrom, TryInto};
+
+    use super::super::objects::{Symbol, Syntax, Vector};
 
     #[test]
     fn test_const() {
         let mut state = State::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" 23 ".chars()));
+
         unsafe {
+            state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        assert_eq!(state.pop().unwrap(), Value::from(23i16));
+        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
+
+        assert_eq!(parsed.datum, Value::from(23i16));
     }
 
     #[test]
@@ -187,10 +373,11 @@ mod tests {
         let symbol: Symbol = state.pop().unwrap().try_into().unwrap();
 
         unsafe {
+            state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Value = state.pop().unwrap();
-        let parsed: Symbol = parsed.try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
+        let parsed: Symbol = parsed.datum.try_into().unwrap();
 
         assert_eq!(parsed.as_str(), symbol.as_str());
         assert_eq!(parsed.hash, symbol.hash);
@@ -202,10 +389,12 @@ mod tests {
         let mut parser = Parser::new(Lexer::new(" () ".chars()));
 
         unsafe {
+            state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
+        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::NIL);
+        assert_eq!(parsed.datum, Value::NIL);
     }
 
     #[test]
@@ -214,11 +403,13 @@ mod tests {
         let mut parser = Parser::new(Lexer::new(" (5) ".chars()));
 
         unsafe {
+            state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Pair = state.pop().unwrap().try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
+        let parsed: Pair = parsed.datum.try_into().unwrap();
 
-        assert_eq!(parsed.car, Value::from(5i16));
+        assert_eq!(Syntax::try_from(parsed.car).unwrap().datum, Value::from(5i16));
         assert_eq!(parsed.cdr, Value::NIL);
     }
 
@@ -228,12 +419,14 @@ mod tests {
         let mut parser = Parser::new(Lexer::new(" (5 . 8) ".chars()));
 
         unsafe {
+            state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Pair = state.pop().unwrap().try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
+        let parsed: Pair = parsed.datum.try_into().unwrap();
 
-        assert_eq!(parsed.car, Value::from(5i16));
-        assert_eq!(parsed.cdr, Value::from(8i16));
+        assert_eq!(Syntax::try_from(parsed.car).unwrap().datum, Value::from(5i16));
+        assert_eq!(Syntax::try_from(parsed.cdr).unwrap().datum, Value::from(8i16));
     }
 
     #[test]
@@ -242,11 +435,13 @@ mod tests {
         let mut parser = Parser::new(Lexer::new(" #(5) ".chars()));
 
         unsafe {
+            state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Vector = state.pop().unwrap().try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
+        let parsed: Vector = parsed.datum.try_into().unwrap();
 
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0], Value::from(5i16));
+        assert_eq!(Syntax::try_from(parsed[0]).unwrap().datum, Value::from(5i16));
     }
 }

@@ -9,8 +9,9 @@ use super::error::PgsError;
 use super::gc::MemoryManager;
 use super::interpreter::RuntimeError;
 use super::objects::{
-    Bindings, Cars, Closure, Object, Pair, PgsString, Symbol, SymbolTable, Vector
+    Bindings, Cars, Closure, Object, Pair, PgsString, Symbol, SymbolTable, Syntax, Vector
 };
+use super::parser::Loc;
 use super::refs::{FrameTag, HeapValue, Value};
 
 pub struct State {
@@ -67,6 +68,8 @@ impl State {
         let len = self.stack.len();
         self.stack.swap(len - 2, len - 1);
     }
+
+    pub fn dup(&mut self) { self.push(self.peek().unwrap()) }
 
     pub fn get(&self, i: usize) -> Option<Value> {
         self.stack.len().checked_sub(1 + i).map(|i| self.stack[i])
@@ -140,6 +143,37 @@ impl State {
         f.clovers_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(f.into())
+    }
+
+    pub unsafe fn push_syntax(&mut self, loc: Loc) {
+        let datum = self.peek().unwrap();
+        self.push(loc.source);
+        let syntax = if let Some(syntax) = Syntax::new(
+            self,
+            datum,
+            Value::FALSE,
+            loc.source,
+            loc.pos.line.try_into().unwrap(),
+            loc.pos.column.try_into().unwrap()
+        ) {
+            self.pop().unwrap(); // source
+            self.pop().unwrap(); // datum
+            syntax
+        } else {
+            self.collect_garbage();
+            let source = self.pop().unwrap();
+            let datum = self.pop().unwrap();
+            Syntax::new(
+                self,
+                datum,
+                Value::FALSE,
+                source,
+                loc.pos.line.try_into().unwrap(),
+                loc.pos.column.try_into().unwrap()
+            )
+            .unwrap()
+        };
+        self.push(syntax);
     }
 
     pub fn get_symbol(&mut self, name: &str) -> Option<Symbol> {

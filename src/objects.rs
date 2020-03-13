@@ -13,7 +13,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager};
-use super::refs::{HeapValue, Value};
+use super::refs::{HeapValue, UnpackedValue, Value};
 use super::state::State;
 
 // ---
@@ -25,7 +25,8 @@ pub enum HeapTag {
     Pair = 0x2,
     Vector = 0x3,
     Closure = 0x4,
-    Bindings = 0x5
+    Bindings = 0x5,
+    Syntax = 0x6
 }
 
 impl HeapTag {
@@ -80,7 +81,8 @@ pub enum UnpackedHeapValue {
     Symbol(Symbol),
     Pair(Pair),
     Bindings(Bindings),
-    Closure(Closure)
+    Closure(Closure),
+    Syntax(Syntax)
 }
 
 impl Display for UnpackedHeapValue {
@@ -121,7 +123,9 @@ impl Display for UnpackedHeapValue {
                 ")".fmt(f)
             },
             UnpackedHeapValue::Bindings(_) => "#<environment>".fmt(f),
-            UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f)
+            UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f),
+            UnpackedHeapValue::Syntax(so) =>
+                write!(f, "#<syntax @ {}:{}:{} {}>", so.source, so.line, so.column, so.datum),
         }
     }
 }
@@ -775,6 +779,91 @@ impl Bindings {
         }
 
         Ok(())
+    }
+}
+
+// ---
+
+pub type Syntax = HeapValue<SyntaxObject>;
+
+#[repr(C)]
+pub struct SyntaxObject {
+    pub datum: Value,
+    pub scopes: Value,
+    pub source: Value,
+    pub line: Value,
+    pub column: Value
+}
+
+impl Heaped for SyntaxObject {
+    const TAG: HeapTag = HeapTag::Syntax;
+}
+
+impl Syntax {
+    pub fn new(
+        state: &mut State, datum: Value, scopes: Value, source: Value, line: Value, column: Value
+    ) -> Option<Self> {
+        state
+            .alloc::<SyntaxObject>(Object::new(Header::new(
+                HeapTag::Syntax,
+                size_of::<SyntaxObject>() / size_of::<Value>()
+            )))
+            .map(|mut syn| {
+                syn.datum = datum;
+                syn.scopes = scopes;
+                syn.source = source;
+                syn.line = line;
+                syn.column = column;
+                syn
+            })
+    }
+}
+
+impl Value {
+    /// `syntax->datum`
+    pub unsafe fn to_datum(self, state: &mut State) -> Value {
+        match self.unpack() {
+            UnpackedValue::ORef(o) => match o.unpack() {
+                UnpackedHeapValue::Syntax(syntax) => syntax.datum.to_datum(state),
+                UnpackedHeapValue::Pair(pair) => {
+                    state.push(pair);
+                    let car = pair.car.to_datum(state);
+                    state.push(car);
+                    let pair = transmute::<Value, Pair>(state.remove(1).unwrap());
+                    let cdr = pair.cdr.to_datum(state);
+                    state.push(cdr);
+                    state.cons();
+                    state.pop().unwrap()
+                },
+                UnpackedHeapValue::Vector(vec) => {
+                    let len = vec.len();
+                    state.push(vec);
+
+                    for i in 0..len {
+                        let vec = transmute::<Value, Vector>(state.get(len).unwrap());
+                        let v = vec[i].to_datum(state);
+                        state.push(v);
+                    } // { vec v{len} }
+
+                    state.vector(len); // { vec vec* }
+                    state.remove(1).unwrap();
+                    state.pop().unwrap()
+                },
+                UnpackedHeapValue::Symbol(_) => self,
+                UnpackedHeapValue::String(_) => self,
+                UnpackedHeapValue::Bindings(_) => self,
+                UnpackedHeapValue::Closure(_) => self
+            },
+            UnpackedValue::Fixnum(_) => self,
+            UnpackedValue::Flonum(_) => self,
+            UnpackedValue::Char(_) => self,
+            UnpackedValue::Bool(_) => self,
+            UnpackedValue::Nil => self,
+            UnpackedValue::Unbound => self,
+            UnpackedValue::Unspecified => self,
+            UnpackedValue::Eof => self,
+            UnpackedValue::FrameTag(_) => self
+        }
     }
 }
 
