@@ -2,6 +2,10 @@
 
 (define vector-length %length)
 
+(define vector-ref %slot-ref)
+
+(define vector-set! %slot-set!)
+
 (define vector-map
   (lambda (f vec)
     (let ((len (vector-length vec)))

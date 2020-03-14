@@ -381,6 +381,10 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                 Ok(Op::Continue)
             },
             UnpackedHeapValue::Vector(_) => {
+                let vec = state.pop().unwrap();
+                let vec = unsafe { vec.to_datum(state) };
+                println!("{}", vec);
+                state.push(vec);
                 state.push(1u16);
                 Ok(Op::Continue)
             },
@@ -734,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_quote() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 13, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("'()".chars()));
 
@@ -751,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_begin() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 13, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(begin 42 23)".chars()));
 
@@ -768,7 +772,7 @@ mod tests {
 
     #[test]
     fn test_if() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 13, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(if #t 42 23)".chars()));
 
@@ -793,7 +797,7 @@ mod tests {
 
     #[test]
     fn test_lambda() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 13, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("((lambda (a b) b) 5 8)".chars()));
 

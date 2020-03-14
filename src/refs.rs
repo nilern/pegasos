@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::mem::{self, size_of, transmute};
 use std::ops::{Deref, DerefMut};
+use std::slice;
 
 use super::gc::{HeapObject, ObjectReference};
 use super::objects::{HeapTag, Heaped, Object, UnpackedHeapValue};
@@ -317,6 +318,48 @@ impl<T: ?Sized> HeapValue<T> {
     pub fn as_ptr(self) -> *mut Object { unsafe { (self.data() as *mut Object).offset(-1) } }
 
     pub fn data(self) -> *mut u8 { (self.value.0 & !Value::MASK) as *mut u8 }
+
+    pub fn slots<'a>(&'a self) -> &'a [Value] {
+        unsafe {
+            let obj = &mut *self.as_ptr();
+            // OPTIMIZE:
+            slice::from_raw_parts(
+                if obj.skips() {
+                    (obj.data() as *mut Value).add(1)
+                } else {
+                    obj.data() as *mut Value
+                },
+                if obj.is_bytes() {
+                    0
+                } else if obj.skips() {
+                    obj.len() - 1
+                } else {
+                    obj.len()
+                }
+            )
+        }
+    }
+
+    pub fn slots_mut<'a>(&'a mut self) -> &'a mut [Value] {
+        unsafe {
+            let obj = &mut *self.as_ptr();
+            // OPTIMIZE:
+            slice::from_raw_parts_mut(
+                if obj.skips() {
+                    (obj.data() as *mut Value).add(1)
+                } else {
+                    obj.data() as *mut Value
+                },
+                if obj.is_bytes() {
+                    0
+                } else if obj.skips() {
+                    obj.len() - 1
+                } else {
+                    obj.len()
+                }
+            )
+        }
+    }
 
     pub fn identity_hash(self) -> usize { unsafe { (*self.as_ptr()).identity_hash() } }
 }

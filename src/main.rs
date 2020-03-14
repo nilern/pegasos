@@ -13,6 +13,7 @@ mod interpreter;
 mod lexer;
 mod objects;
 mod parser;
+mod primitives;
 mod refs;
 mod state;
 mod util;

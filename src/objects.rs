@@ -834,7 +834,7 @@ impl Value {
                     state.push(vec);
 
                     for i in 0..len {
-                        let vec = transmute::<Value, Vector>(state.get(len).unwrap());
+                        let vec = transmute::<Value, Vector>(state.get(i).unwrap());
                         let v = vec[i].to_datum(state);
                         state.push(v);
                     } // { vec v{len} }
