@@ -1,37 +1,3 @@
-(define list (lambda xs xs))
-
-(define cadr (lambda (ls) (car (cdr ls))))
-
-(define length
-  (lambda (ls)
-    (let ((loop #f))
-      (begin
-        (set! loop (lambda (ls len)
-                     (if (null? ls)
-                       len
-                       (loop (cdr ls) (fx+ len 1)))))
-        (loop ls 0)))))
-
-(define vector-length %length)
-
-(define vector-ref %slot-ref)
-
-(define vector-set! %slot-set!)
-
-(define vector-map
-  (lambda (f vec)
-    (let ((len (vector-length vec)))
-      (let ((vec* (make-vector len))
-            (loop #f))
-        (begin
-          (set! loop (lambda (i)
-                       (if (fx<? i len)
-                         (begin
-                           (vector-set! vec* i (f (vector-ref vec i)))
-                           (loop (fx+ i 1)))
-                         vec*)))
-          (loop 0))))))
-
 (define <record-type> #f)
 
 (define make-rtd
@@ -60,10 +26,6 @@
         (if (eq? (length fieldvs) arity)
           (apply %record rtd fieldvs)
           #f)))))
-
-(define instance?
-  (lambda (t v)
-    (eq? (type v) t)))
 
 (define rtd-predicate
   (lambda (rtd)
