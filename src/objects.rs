@@ -26,7 +26,8 @@ pub enum HeapTag {
     Vector = 0x3,
     Closure = 0x4,
     Bindings = 0x5,
-    Syntax = 0x6
+    Syntax = 0x6,
+    Record = 0x7
 }
 
 impl HeapTag {
@@ -82,7 +83,8 @@ pub enum UnpackedHeapValue {
     Pair(Pair),
     Bindings(Bindings),
     Closure(Closure),
-    Syntax(Syntax)
+    Syntax(Syntax),
+    Record(Record)
 }
 
 impl Display for UnpackedHeapValue {
@@ -120,6 +122,11 @@ impl Display for UnpackedHeapValue {
             UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f),
             UnpackedHeapValue::Syntax(so) =>
                 write!(f, "#<syntax @ {}:{}:{} {}>", so.source, so.line, so.column, so.datum),
+            UnpackedHeapValue::Record(record) => write!(
+                f,
+                "#<record {}>",
+                Record::try_from(record.typ).unwrap().slots().get(3).unwrap()
+            )
         }
     }
 }
@@ -846,7 +853,8 @@ impl Value {
                 UnpackedHeapValue::Symbol(_) => self,
                 UnpackedHeapValue::String(_) => self,
                 UnpackedHeapValue::Bindings(_) => self,
-                UnpackedHeapValue::Closure(_) => self
+                UnpackedHeapValue::Closure(_) => self,
+                UnpackedHeapValue::Record(_) => self
             },
             UnpackedValue::Fixnum(_) => self,
             UnpackedValue::Flonum(_) => self,
@@ -858,6 +866,25 @@ impl Value {
             UnpackedValue::Eof => self,
             UnpackedValue::FrameTag(_) => self
         }
+    }
+}
+
+// ---
+
+pub type Record = HeapValue<RecordData>;
+
+#[repr(C)]
+pub struct RecordData {
+    pub typ: Value
+}
+
+impl Heaped for RecordData {
+    const TAG: HeapTag = HeapTag::Record;
+}
+
+impl Record {
+    pub fn new(state: &mut State, len: usize) -> Option<Self> {
+        state.alloc::<RecordData>(Object::new(Header::new(HeapTag::Record, len)))
     }
 }
 

@@ -383,7 +383,6 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
             UnpackedHeapValue::Vector(_) => {
                 let vec = state.pop().unwrap();
                 let vec = unsafe { vec.to_datum(state) };
-                println!("{}", vec);
                 state.push(vec);
                 state.push(1u16);
                 Ok(Op::Continue)
@@ -404,6 +403,10 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                 state.pop().unwrap();
                 state.push(syntax.datum);
                 Ok(Op::Eval)
+            },
+            UnpackedHeapValue::Record(_) => {
+                state.push(1u16);
+                Ok(Op::Continue)
             }
         },
         UnpackedValue::Fixnum(_) => {

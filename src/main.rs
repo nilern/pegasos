@@ -43,7 +43,7 @@ struct CliArgs {
 fn main() {
     let CliArgs { debug, path, files } = CliArgs::from_args();
 
-    let mut state = State::new(&path, 1 << 16, 1 << 20);
+    let mut state = State::new(&path, 1 << 18, 1 << 20);
     let mut editor = rustyline::Editor::<()>::new();
 
     for path in files {

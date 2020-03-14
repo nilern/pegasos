@@ -381,6 +381,8 @@ impl HeapValue<()> {
                 UnpackedHeapValue::Closure(HeapValue { value: self.value, _phantom: PhantomData }),
             HeapTag::Syntax =>
                 UnpackedHeapValue::Syntax(HeapValue { value: self.value, _phantom: PhantomData }),
+            HeapTag::Record =>
+                UnpackedHeapValue::Record(HeapValue { value: self.value, _phantom: PhantomData }),
         }
     }
 }

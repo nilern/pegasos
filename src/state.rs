@@ -9,7 +9,7 @@ use super::error::PgsError;
 use super::gc::MemoryManager;
 use super::interpreter::{Primitive, RuntimeError};
 use super::objects::{
-    Bindings, Cars, Closure, Object, Pair, PgsString, Symbol, SymbolTable, Syntax, Vector
+    Bindings, Cars, Closure, Object, Pair, PgsString, Record, Symbol, SymbolTable, Syntax, Vector
 };
 use super::parser::Loc;
 use super::primitives::PRIMITIVES;
@@ -198,6 +198,16 @@ impl State {
             .unwrap()
         };
         self.push(syntax);
+    }
+
+    pub unsafe fn record(&mut self, len: usize) {
+        let mut res = Record::new(self, len).unwrap_or_else(|| {
+            self.collect_garbage();
+            Record::new(self, len).unwrap()
+        });
+        res.slots_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
+        self.stack.truncate(self.stack.len() - len);
+        self.push(res);
     }
 
     pub fn get_symbol(&mut self, name: &str) -> Option<Symbol> {
