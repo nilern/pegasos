@@ -16,138 +16,97 @@ pub const PRIMITIVES: [(&str, Primitive); 7] = [
     ("fx<?", fx_lt)
 ];
 
-fn is_null(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
-
-    if argc == 1 {
-        let v = state.pop().unwrap();
-        state.pop().unwrap(); // callee
-        state.push(v == Value::NIL);
-        state.push(1u16);
-        Ok(Op::Continue)
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (1, false), got: argc }
-            .into())
-    }
+macro_rules! count {
+    () => (0);
+    ($param:ident) => (1);
+    ($param:ident, $($params:ident),*) => (1 + count!($($params),*));
 }
 
-fn is_symbol(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
-
-    if argc == 1 {
-        let v = state.pop().unwrap();
-        state.pop().unwrap(); // callee
-        state.push(Symbol::try_from(v).is_ok());
-        state.push(1u16);
-        Ok(Op::Continue)
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (1, false), got: argc }
-            .into())
-    }
+macro_rules! pop_params {
+    ($state:ident) => {};
+    ($state:ident, $param:ident) => {let $param = $state.pop().unwrap();};
+    ($state:ident, $param:ident, $($params:ident),*) => {
+        pop_params!($state, $($params),*);
+        let $param = $state.pop().unwrap();
+    };
 }
 
-fn object_length(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
-
-    if argc == 1 {
-        if let Ok(oref) = HeapValue::<()>::try_from(state.pop().unwrap()) {
-            state.pop().unwrap(); // callee
-            state.push(Value::try_from(unsafe { (*oref.as_ptr()).len() }).unwrap());
-            state.push(1u16);
-            Ok(Op::Continue)
+macro_rules! checked_primitive_body {
+    (() $body:block) => {$body};
+    (($param:ident : $typ:ty) $body:block) => {
+        if let Ok($param) = <Value as TryInto<$typ>>::try_into($param) {
+            checked_primitive_body!(() $body)
         } else {
             unimplemented!()
         }
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (1, false), got: argc }
-            .into())
-    }
+    };
+    (($param:ident : $typ:ty, $($params:ident : $typs:ty),*) $body:block) => {
+        if let Ok($param) = <Value as TryInto<$typ>>::try_into($param) {
+            checked_primitive_body!(($($params : $typs),*) $body)
+        } else {
+            unimplemented!()
+        }
+    };
 }
 
-fn slot_ref(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+macro_rules! primitive {
+    ($name:ident $state:ident ($($params:ident : $typs:ty),*) $body:block) => {
+        fn $name($state: &mut State) -> Result<Op, PgsError> {
+            let arity = count!($($params),*);
+            let argc: usize = $state.pop().unwrap().try_into().unwrap();
 
-    if argc == 2 {
-        if let Ok(i) = <Value as TryInto<usize>>::try_into(state.pop().unwrap()) {
-            if let Ok(oref) = HeapValue::<()>::try_from(state.pop().unwrap()) {
-                state.pop().unwrap(); // callee
-                state.push(*oref.slots().get(i).unwrap());
-                state.push(1u16);
-                Ok(Op::Continue)
+            if argc == arity {
+                pop_params!($state, $($params),*);
+                $state.pop().unwrap(); // callee
+                checked_primitive_body!(($($params : $typs),*) $body)
             } else {
-                unimplemented!()
+                Err(RuntimeError::Argc { callee: $state.get(argc).unwrap(), params: (arity, false), got: argc }
+                   .into())
             }
-        } else {
-            unimplemented!()
         }
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, false), got: argc }
-            .into())
-    }
+    };
 }
 
-fn slot_set(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+primitive! { is_null state (v: Value) {
+    state.push(v == Value::NIL);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
 
-    if argc == 3 {
-        let v = state.pop().unwrap();
+primitive! { is_symbol state (v: Value) {
+    state.push(Symbol::try_from(v).is_ok());
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
 
-        if let Ok(i) = <Value as TryInto<usize>>::try_into(state.pop().unwrap()) {
-            if let Ok(mut oref) = HeapValue::<()>::try_from(state.pop().unwrap()) {
-                state.pop().unwrap(); // callee
-                *oref.slots_mut().get_mut(i).unwrap() = v;
-                state.push(Value::UNSPECIFIED);
-                state.push(1u16);
-                Ok(Op::Continue)
-            } else {
-                unimplemented!()
-            }
-        } else {
-            unimplemented!()
-        }
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, false), got: argc }
-            .into())
-    }
-}
+primitive! { object_length state (v: HeapValue<()>) {
+    state.push(Value::try_from(unsafe { (*v.as_ptr()).len() }).unwrap());
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
 
-fn make_vector(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+primitive! { slot_ref state (o: HeapValue<()>, i: usize) {
+    state.push(*o.slots().get(i).unwrap());
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
 
-    if argc == 1 {
-        if let Ok(len) = state.pop().unwrap().try_into() {
-            state.pop().unwrap(); // callee
-            unsafe { state.push_vector(len) };
-            state.push(1u16);
-            Ok(Op::Continue)
-        } else {
-            unimplemented!()
-        }
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (1, false), got: argc }
-            .into())
-    }
-}
+primitive! { slot_set state (o: HeapValue<()>, i: usize, v: Value) {
+    let mut o = o;
+    *o.slots_mut().get_mut(i).unwrap() = v;
+    state.push(Value::UNSPECIFIED);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
 
-fn fx_lt(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+primitive! { make_vector state (len: usize) {
+    unsafe { state.push_vector(len) };
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
 
-    if argc == 2 {
-        if let Ok(a) = state.pop().unwrap().try_into() {
-            if let Ok(b) = state.pop().unwrap().try_into() {
-                state.pop().unwrap(); // callee
-                state.push(isize::lt(&b, &a)); // OPTIMIZE
-                state.push(1u16);
-                Ok(Op::Continue)
-            } else {
-                unimplemented!()
-            }
-        } else {
-            unimplemented!()
-        }
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, false), got: argc }
-            .into())
-    }
-}
-
+primitive! { fx_lt state (a: isize, b: isize) {
+    state.push(isize::lt(&b, &a)); // OPTIMIZE
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
