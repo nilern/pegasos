@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_gc() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 14, 1 << 20);
         let n = 4i16;
         for i in 0..n {
             state.push(i);

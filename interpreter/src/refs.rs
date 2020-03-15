@@ -51,16 +51,10 @@ pub enum UnpackedValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Value(usize);
 
-impl Value {
-    pub unsafe fn from_data(ptr: *mut u8) -> Self { Self(ptr as usize | BaseTag::ORef as usize) }
-}
-
 impl ObjectReference for Value {
     type Object = Object;
 
-    unsafe fn from_ptr(ptr: *mut Self::Object) -> Self {
-        Self((*ptr).data() as usize | BaseTag::ORef as usize)
-    }
+    unsafe fn from_ptr(data: *mut u8) -> Self { Self(data as usize | BaseTag::ORef as usize) }
 
     fn as_mut_ptr(self) -> Option<*mut Object> {
         if self.is_oref() {

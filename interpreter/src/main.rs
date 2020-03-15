@@ -35,15 +35,25 @@ struct CliArgs {
     #[structopt(short = "I", parse(from_os_str))]
     path: Vec<PathBuf>,
 
+    /// Initial heap size in KiB
+    #[structopt(long, default_value = "1024")]
+    min_heap: usize,
+
+    /// Max heap size in KiB
+    #[structopt(long, default_value = "1024")]
+    max_heap: usize,
+
     /// Files to `(load)` initially
     #[structopt(name = "FILE", parse(from_os_str))]
     files: Vec<PathBuf>
 }
 
 fn main() {
-    let CliArgs { debug, path, files } = CliArgs::from_args();
+    let CliArgs { debug, path, min_heap, max_heap, files } = CliArgs::from_args();
 
-    let mut state = State::new(&path, 1 << 20, 1 << 20);
+    assert!(min_heap <= max_heap);
+
+    let mut state = State::new(&path, min_heap << 10, max_heap << 10);
     let mut editor = rustyline::Editor::<()>::new();
 
     for path in files {

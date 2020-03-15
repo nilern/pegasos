@@ -7,15 +7,14 @@ use std::ptr;
 
 pub trait HeapObject: Copy {
     type Ref: ObjectReference<Object = Self>;
-    // type Header: ObjectHeader<Ref=Self::Ref>;
     type Fields: Iterator<Item = *mut Self::Ref>;
 
     const LAPSED: Self::Ref;
 
     fn is_alignment_hole(mem: *const Self) -> bool;
 
-    unsafe fn forwarding(data: *const u8) -> Self;
-    fn forward(&self) -> Option<Self::Ref>;
+    fn forward(&mut self, data: *const u8);
+    fn forwarded(&self) -> Option<Self::Ref>;
 
     fn size(&self) -> usize;
     fn align(&self) -> usize;
@@ -27,7 +26,7 @@ pub trait HeapObject: Copy {
 pub trait ObjectReference: Copy {
     type Object;
 
-    unsafe fn from_ptr(ptr: *mut Self::Object) -> Self;
+    unsafe fn from_ptr(data: *mut u8) -> Self;
     fn as_mut_ptr(self) -> Option<*mut Self::Object>;
 }
 
@@ -91,13 +90,13 @@ impl<O: HeapObject> MemoryManager<O> {
         free = data.checked_add(base.size())?;
 
         if free <= self.tospace.end as usize {
-            unsafe { ptr::write_bytes(self.free, 0, free - self.free as usize) };
-            self.free = free as *mut u8;
-            let obj = (data - size_of::<O>()) as *mut O;
             unsafe {
+                ptr::write_bytes(self.free, 0, free - self.free as usize);
+                self.free = free as *mut u8;
+                let obj = (data as *mut O).offset(-1);
                 *obj = base;
+                Some(O::Ref::from_ptr(data as *mut u8))
             }
-            Some(unsafe { O::Ref::from_ptr(obj) })
         } else {
             None
         }
@@ -126,7 +125,7 @@ impl<O: HeapObject> MemoryManager<O> {
             Some(obj) => {
                 let obj = unsafe { &mut *obj };
 
-                match obj.forward() {
+                match obj.forwarded() {
                     Some(res) => res,
                     None => {
                         let res = self.alloc(*obj).unwrap(); // tospace is at least as big as fromspace
@@ -134,7 +133,7 @@ impl<O: HeapObject> MemoryManager<O> {
                         unsafe {
                             ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size());
                         }
-                        *obj = unsafe { O::forwarding(new_obj.data()) };
+                        obj.forward(new_obj.data());
                         res
                     }
                 }
@@ -188,7 +187,7 @@ impl<'a, O: HeapObject> Collection<'a, O> {
     pub unsafe fn weaks<I: Iterator<Item = *mut O::Ref>>(self, weaks: I) {
         for weak in weaks {
             match (*weak).as_mut_ptr() {
-                Some(oref) => match (*oref).forward() {
+                Some(oref) => match (*oref).forwarded() {
                     Some(forwarded) => *weak = forwarded,
                     None => *weak = O::LAPSED
                 },
@@ -222,7 +221,7 @@ mod tests {
 
         unsafe fn forwarding(ptr: *const u8) -> Self { Self(ptr as usize | Self::FWD_TAG) }
 
-        fn forward(&self) -> Option<Ref> {
+        fn forwarded(&self) -> Option<Ref> {
             if self.0 & Self::MASK == Self::FWD_TAG {
                 Some(Ref((self.0 & !Self::MASK) as *mut u8))
             } else {
@@ -249,8 +248,8 @@ mod tests {
             Hdr::is_alignment_hole(unsafe { &(*mem).header })
         }
 
-        unsafe fn forwarding(oref: *const u8) -> Self { Self { header: Hdr::forwarding(oref) } }
-        fn forward(&self) -> Option<Self::Ref> { self.header.forward() }
+        fn forward(&mut self, oref: *const u8) { *self = Self { header: unsafe { Hdr::forwarding(oref) } }; }
+        fn forwarded(&self) -> Option<Self::Ref> { self.header.forwarded() }
 
         fn size(&self) -> usize { self.header.size() }
         fn align(&self) -> usize { self.header.align() }
@@ -265,7 +264,7 @@ mod tests {
     impl ObjectReference for Ref {
         type Object = Obj;
 
-        unsafe fn from_ptr(ptr: *mut Self::Object) -> Self { Ref(ptr.add(1) as *mut u8) }
+        unsafe fn from_ptr(ptr: *mut u8) -> Self { Ref(ptr) }
         fn as_mut_ptr(self) -> Option<*mut Self::Object> {
             Some(unsafe { (self.0 as *mut Self::Object).offset(-1) })
         }

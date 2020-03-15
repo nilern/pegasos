@@ -12,7 +12,7 @@ use std::str;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
-use super::gc::{HeapObject, MemoryManager};
+use super::gc::{HeapObject, MemoryManager, ObjectReference};
 use super::refs::{HeapValue, UnpackedValue, Value};
 use super::state::State;
 
@@ -133,22 +133,15 @@ impl Display for UnpackedHeapValue {
 
 // ---
 
-/// Bit 0 (LSB) is always set, for heap parsability (header vs. alignment
-/// padding). Bit 1 is mark (forwarded) bit
-/// Bit 2 is bytes bit
-/// Bit 3 is skip (closure) bit
-/// Bits 4-7 are type tag
-/// Other bits are len
 #[derive(Clone, Copy)]
 pub struct Header(usize);
 
 impl Header {
-    const FWD_MASK: usize = 0b11;
-    const FWD_TAG: usize = 0b11;
     const TYPE_SHIFT: usize = 4;
     const TYPE_MASK: usize = 0b1111;
     const SIZE_SHIFT: usize = 8;
 
+    const MARK_BIT: usize = 0b10;
     const BYTES_BIT: usize = 0b100;
     const SKIP_BIT: usize = 0b1000;
 
@@ -159,7 +152,7 @@ impl Header {
                 | (type_tag as usize) << Self::TYPE_SHIFT
                 | (type_tag.skips() as usize) << 3
                 | (type_tag.is_bytes() as usize) << 2
-                | 0b01
+                | 0b01 // always set for `is_alignment_hole`
         )
     }
 
@@ -192,17 +185,9 @@ impl Header {
 
     fn skips(&self) -> bool { self.0 & Self::SKIP_BIT == Self::SKIP_BIT }
 
-    fn is_forwarding(&self) -> bool { self.0 & Self::FWD_MASK == Self::FWD_TAG }
+    fn mark(&mut self) { *self = Self(self.0 | Self::MARK_BIT); }
 
-    unsafe fn forwarding(ptr: *const u8) -> Self { Self(ptr as usize | Self::FWD_TAG) }
-
-    fn forward(&self) -> Option<Value> {
-        if self.is_forwarding() {
-            Some(unsafe { Value::from_data((self.0 & !Self::FWD_MASK) as *mut u8) })
-        } else {
-            None
-        }
-    }
+    fn is_marked(&self) -> bool { self.0 & Self::MARK_BIT != 0 }
 }
 
 // ---
@@ -255,10 +240,17 @@ impl HeapObject for Object {
         Header::is_alignment_hole(unsafe { &(*mem).header })
     }
 
-    unsafe fn forwarding(data: *const u8) -> Self {
-        Self { identity_hash: 0, header: Header::forwarding(data) }
+    fn forward(&mut self, data: *const u8) {
+        self.identity_hash = data as usize;
+        self.header.mark();
     }
-    fn forward(&self) -> Option<Self::Ref> { self.header.forward() }
+    fn forwarded(&self) -> Option<Self::Ref> {
+        if self.header.is_marked() {
+            Some(unsafe { Self::Ref::from_ptr(self.identity_hash as *mut u8) })
+        } else {
+            None
+        }
+    }
 
     fn size(&self) -> usize { self.header.size() }
     fn align(&self) -> usize { self.header.align() }
@@ -898,7 +890,7 @@ mod tests {
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 14, 1 << 20);
         let len = 7;
         let i = 3;
 
@@ -914,7 +906,7 @@ mod tests {
 
     #[test]
     fn test_string() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 14, 1 << 20);
         let cs = "foo";
 
         let s = PgsString::new(&mut state, cs).unwrap();
@@ -924,7 +916,7 @@ mod tests {
 
     #[test]
     fn test_symbol() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 14, 1 << 20);
         let name = "foo";
 
         let s = Symbol::new(&mut state, name).unwrap();
@@ -938,7 +930,7 @@ mod tests {
 
     #[test]
     fn test_pair() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 14, 1 << 20);
         let a = Value::from(5i16);
         let b = Value::from(8i16);
 
@@ -950,7 +942,7 @@ mod tests {
 
     #[test]
     fn test_bindings() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 14, 1 << 20);
         let bindings = Bindings::new(&mut state, None).unwrap();
         let a = Value::from(5i16);
         let b = Value::from(8i16);
@@ -972,7 +964,7 @@ mod tests {
 
     #[test]
     fn test_identity_hash() {
-        let mut state = State::new(&[], 1 << 12, 1 << 20);
+        let mut state = State::new(&[], 1 << 14, 1 << 20);
         let a = Value::from(5i16);
         let b = Value::from(8i16);
         let mut p = Pair::new(&mut state).unwrap();
