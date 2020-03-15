@@ -1,16 +1,20 @@
 use std::convert::{TryFrom, TryInto};
+use std::mem::transmute;
 
 use super::error::PgsError;
 use super::interpreter::{Op, Primitive, RuntimeError};
 use super::objects::{Cars, Closure, Pair, Symbol};
-use super::refs::{HeapValue, Value};
+use super::refs::{HeapValue, Tag, Value};
 use super::state::State;
 
-pub const PRIMITIVES: [(&str, Primitive); 14] = [
+pub const PRIMITIVES: [(&str, Primitive); 17] = [
     ("eq?", eq),
+    ("%identity-hash", identity_hash),
     ("apply", apply),
     ("null?", is_null),
     ("symbol?", is_symbol),
+    ("%immediate-type-index", immediate_tag),
+    ("%heap-type-index", heap_tag),
     ("%length", object_length),
     ("%slot-ref", slot_ref),
     ("%slot-set!", slot_set),
@@ -80,6 +84,12 @@ primitive! { eq state (a: Value, b: Value) {
     Ok(Op::Continue)
 }}
 
+primitive! { identity_hash state (v: Value) {
+    state.push(unsafe { transmute::<usize, Value>(v.identity_hash() << Value::SHIFT | Tag::Fixnum as usize) });
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
 fn apply(state: &mut State) -> Result<Op, PgsError> {
     let argc: usize = state.pop().unwrap().try_into().unwrap();
 
@@ -118,6 +128,18 @@ primitive! { is_null state (v: Value) {
 
 primitive! { is_symbol state (v: Value) {
     state.push(Symbol::try_from(v).is_ok());
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { immediate_tag state (v: Value) {
+    state.push(v.immediate_type_index() as u16);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { heap_tag state (v: HeapValue<()>) {
+    state.push(v.heap_tag() as u16);
     state.push(1u16);
     Ok(Op::Continue)
 }}

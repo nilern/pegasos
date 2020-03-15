@@ -236,6 +236,19 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                 Some(c) if c.is_whitespace() => {
                     let _ = self.chars.next();
                 },
+                Some(';') => {
+                    let _ = self.chars.next();
+
+                    loop {
+                        match self.peek_char() {
+                            Some('\n') => break,
+                            Some(_) => {
+                                let _ = self.chars.next();
+                            },
+                            None => break
+                        }
+                    }
+                },
                 Some('(') => {
                     let (pos, _) = self.chars.next().unwrap();
                     break Some(Ok((pos, LParen)));

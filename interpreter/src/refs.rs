@@ -23,7 +23,7 @@ enum BaseTag {
 }
 
 #[derive(PartialEq)]
-enum Tag {
+pub enum Tag {
     ORef = 0b01,
     Fixnum = 0b00,
     Flonum = 0b10,
@@ -98,6 +98,15 @@ impl Value {
             unsafe { transmute((self.0 & Self::EXT_MASK) as u8) }
         } else {
             unsafe { transmute(base_tag) }
+        }
+    }
+
+    pub fn immediate_type_index(self) -> u8 {
+        let tag = self.tag();
+        if tag == Tag::Singleton {
+            ((1 << Self::EXT_SHIFT) | (self.0 >> Self::EXT_SHIFT & Self::EXT_MASK)) as u8
+        } else {
+            tag as u8
         }
     }
 
