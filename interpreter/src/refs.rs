@@ -14,7 +14,7 @@ use super::util::fsize;
 
 // ---
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum BaseTag {
     ORef = 0b01,
     Fixnum = 0b00, // i30 | i62
@@ -22,7 +22,7 @@ enum BaseTag {
     Ext = 0b11     // char, bool, '() etc.
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Tag {
     ORef = 0b01,
     Fixnum = 0b00,
@@ -48,7 +48,7 @@ pub enum UnpackedValue {
 
 // ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Value(usize);
 
 impl ObjectReference for Value {
@@ -86,7 +86,7 @@ impl Value {
 
     fn base_tag(self) -> BaseTag { unsafe { transmute((self.0 & Self::MASK) as u8) } }
 
-    fn tag(self) -> Tag {
+    pub fn tag(self) -> Tag {
         let base_tag = self.base_tag();
         if BaseTag::Ext == base_tag {
             unsafe { transmute((self.0 & Self::EXT_MASK) as u8) }
@@ -111,7 +111,7 @@ impl Value {
     pub fn unpack(self) -> UnpackedValue {
         match self.tag() {
             Tag::ORef => UnpackedValue::ORef(HeapValue { value: self, _phantom: PhantomData }),
-            Tag::Fixnum => UnpackedValue::Fixnum((self.0 >> Self::SHIFT) as isize),
+            Tag::Fixnum => UnpackedValue::Fixnum(self.0 as isize >> Self::SHIFT),
             Tag::Flonum => unimplemented!(),
             Tag::Char => UnpackedValue::Char(unsafe {
                 char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32)
@@ -245,6 +245,10 @@ impl TryInto<bool> for Value {
     }
 }
 
+impl Debug for Value {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "Value({:x})", self.0) }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use UnpackedValue::*;
@@ -275,7 +279,8 @@ pub enum FrameTag {
     Set = 3 << Value::EXT_SHIFT | Tag::FrameTag as usize,
     Let = 4 << Value::EXT_SHIFT | Tag::FrameTag as usize,
     Arg = 5 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    Stmt = 6 << Value::EXT_SHIFT | Tag::FrameTag as usize
+    Stmt = 6 << Value::EXT_SHIFT | Tag::FrameTag as usize,
+    CallWithValues = 7 << Value::EXT_SHIFT | Tag::FrameTag as usize
 }
 
 impl FrameTag {
@@ -289,7 +294,8 @@ impl FrameTag {
             Set => (2, false),
             Let => (4, true),
             Arg => (2, true),
-            Stmt => (2, false)
+            Stmt => (2, false),
+            CallWithValues => (2, false)
         }
     }
 }

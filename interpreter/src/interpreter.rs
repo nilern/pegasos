@@ -617,6 +617,12 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
             } else {
                 state.raise(RuntimeError::Retc { cont_params: (1, false), got: value_count })
             }
+        },
+        FrameTag::CallWithValues => {
+            state.remove(value_count).unwrap(); // frame tag
+            state.remove(value_count).unwrap(); // env
+            state.push(Value::try_from(value_count).unwrap());
+            Ok(Op::Apply)
         }
     }
 }

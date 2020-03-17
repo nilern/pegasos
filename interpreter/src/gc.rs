@@ -248,7 +248,9 @@ mod tests {
             Hdr::is_alignment_hole(unsafe { &(*mem).header })
         }
 
-        fn forward(&mut self, oref: *const u8) { *self = Self { header: unsafe { Hdr::forwarding(oref) } }; }
+        fn forward(&mut self, oref: *const u8) {
+            *self = Self { header: unsafe { Hdr::forwarding(oref) } };
+        }
         fn forwarded(&self) -> Option<Self::Ref> { self.header.forwarded() }
 
         fn size(&self) -> usize { self.header.size() }

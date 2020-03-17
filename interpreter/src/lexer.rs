@@ -152,8 +152,20 @@ impl<I: Iterator<Item = char>> Lexer<I> {
     }
 
     fn number(&mut self, radix: Radix) -> Result<(Pos, Token), Error> {
-        let (pos, c) = self.chars.next().unwrap();
-        let mut res = c.to_digit(radix as u32).unwrap() as isize;
+        let (pos, sign) = match self.chars.peek().unwrap() {
+            (pos, '+') => {
+                let _ = self.chars.next().unwrap();
+                (pos, 1)
+            },
+            (pos, '-') => {
+                let _ = self.chars.next().unwrap();
+                (pos, -1)
+            },
+            (pos, _) => (pos, 1)
+        };
+
+        let (_, c) = self.chars.next().unwrap();
+        let mut res = c.to_digit(radix as u32).unwrap() as isize * sign;
 
         loop {
             match self.peek_char() {
@@ -279,10 +291,11 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                         _ => unimplemented!()
                     }
                 },
-                Some(c) if c.is_digit(10) => break Some(self.number(Radix::Decimal)),
                 Some(c) if is_initial(c) => break Some(self.identifier(state)),
-                None => break None,
-                _ => unimplemented!()
+                Some(c) if c.is_digit(10) || c == '+' || c == '-' =>
+                    break Some(self.number(Radix::Decimal)),
+                Some(c) => unimplemented!("{:?}", c),
+                None => break None
             }
         })
     }

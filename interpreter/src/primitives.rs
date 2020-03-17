@@ -1,18 +1,23 @@
 use std::convert::{TryFrom, TryInto};
+use std::io;
 use std::mem::transmute;
 
 use super::error::PgsError;
 use super::interpreter::{Op, Primitive, RuntimeError};
 use super::objects::{Cars, Closure, Pair, Symbol};
-use super::refs::{HeapValue, Tag, Value};
+use super::refs::{FrameTag, HeapValue, Tag, Value};
 use super::state::State;
 
-pub const PRIMITIVES: [(&str, Primitive); 17] = [
+pub const PRIMITIVES: [(&str, Primitive); 24] = [
+    ("void", void),
     ("eq?", eq),
     ("%identity-hash", identity_hash),
     ("apply", apply),
+    ("call-with-values", call_with_values),
+    ("values", values),
     ("null?", is_null),
     ("symbol?", is_symbol),
+    ("%symbol-hash", symbol_hash),
     ("%immediate-type-index", immediate_tag),
     ("%heap-type-index", heap_tag),
     ("%length", object_length),
@@ -24,7 +29,10 @@ pub const PRIMITIVES: [(&str, Primitive); 17] = [
     ("cdr", cdr),
     ("make-vector", make_vector),
     ("fx<?", fx_lt),
-    ("fx+", fx_add)
+    ("fx+", fx_add),
+    ("fx-", fx_sub),
+    ("bitwise-and", bitwise_and),
+    ("arithmetic-shift", arithmetic_shift)
 ];
 
 macro_rules! count {
@@ -67,7 +75,7 @@ macro_rules! primitive {
             let argc: usize = $state.pop().unwrap().try_into().unwrap();
 
             if argc == arity {
-                pop_params!($state, $($params),*);
+                pop_params!($state $(,$params)*);
                 $state.pop().unwrap(); // callee
                 checked_primitive_body!(($($params : $typs),*) $body)
             } else {
@@ -77,6 +85,12 @@ macro_rules! primitive {
         }
     };
 }
+
+primitive! { void state () {
+    state.push(Value::UNSPECIFIED);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
 
 primitive! { eq state (a: Value, b: Value) {
     state.push(a == b);
@@ -120,6 +134,21 @@ fn apply(state: &mut State) -> Result<Op, PgsError> {
     }
 }
 
+primitive! { call_with_values state (producer: Value, consumer: Value) {
+    state.push(consumer);
+    state.push_env();
+    state.push(FrameTag::CallWithValues);
+    state.push(producer);
+    state.push(0u16);
+    Ok(Op::Apply)
+}}
+
+fn values(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.peek().unwrap().try_into().unwrap();
+    state.remove(argc + 1).unwrap(); // callee
+    Ok(Op::Continue)
+}
+
 primitive! { is_null state (v: Value) {
     state.push(v == Value::NIL);
     state.push(1u16);
@@ -128,6 +157,12 @@ primitive! { is_null state (v: Value) {
 
 primitive! { is_symbol state (v: Value) {
     state.push(Symbol::try_from(v).is_ok());
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { symbol_hash state (v: Symbol) {
+    state.push(unsafe { transmute::<usize, Value>((v.hash as usize) << Value::SHIFT | Tag::Fixnum as usize) });
     state.push(1u16);
     Ok(Op::Continue)
 }}
@@ -192,11 +227,45 @@ primitive! { cdr state (ls: Pair) {
     Ok(Op::Continue)
 }}
 
-primitive! { make_vector state (len: usize) {
-    unsafe { state.push_vector(len) };
+fn make_vector(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.pop().unwrap().try_into().unwrap();
+
+    match argc {
+        1 =>
+            if let Ok(len) = <Value as TryInto<usize>>::try_into(state.pop().unwrap()) {
+                unsafe {
+                    state.push_vector(len);
+                }
+            } else {
+                unimplemented!()
+            },
+        2 => {
+            let v = state.pop().unwrap();
+            if let Ok(len) = <Value as TryInto<usize>>::try_into(state.pop().unwrap()) {
+                for _ in 0..len {
+                    state.push(v);
+                }
+                unsafe {
+                    state.vector(len);
+                }
+            } else {
+                unimplemented!()
+            }
+        },
+        argc =>
+        // TODO: arity is actually 1 | 2, not 2:
+            return Err(RuntimeError::Argc {
+                callee: state.get(argc).unwrap(),
+                params: (2, false),
+                got: argc
+            }
+            .into()),
+    }
+
+    state.remove(1).unwrap(); // callee
     state.push(1u16);
     Ok(Op::Continue)
-}}
+}
 
 primitive! { fx_lt state (a: isize, b: isize) {
     state.push(a < b); // OPTIMIZE
@@ -205,7 +274,30 @@ primitive! { fx_lt state (a: isize, b: isize) {
 }}
 
 primitive! { fx_add state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a + b).unwrap()); // OPTIMIZE
+    state.push(<isize as TryInto<Value>>::try_into(a.checked_add(b).expect("overflow")).unwrap()); // OPTIMIZE
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { fx_sub state (a: isize, b: isize) {
+    state.push(<isize as TryInto<Value>>::try_into(a.checked_sub(b).expect("overflow")).unwrap()); // OPTIMIZE
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { bitwise_and state (a: isize, b: isize) {
+    state.push(<isize as TryInto<Value>>::try_into(a & b).unwrap()); // OPTIMIZE
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { arithmetic_shift state (n: isize, count: isize) {
+    let shifted = if count < 0 {
+        n.checked_shr((-count) as u32).expect("overflow")
+    } else {
+        n.checked_shl(count as u32).expect("overflow")
+    };
+    state.push(<isize as TryInto<Value>>::try_into(shifted).unwrap()); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
