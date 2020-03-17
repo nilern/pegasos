@@ -216,6 +216,8 @@ impl State {
 
     pub fn push_env(&mut self) { self.push(self.env) }
 
+    pub fn env(&self) -> Bindings { self.env }
+
     pub fn set_env(&mut self, env: Bindings) { self.env = env }
 
     pub unsafe fn push_scope(&mut self) {

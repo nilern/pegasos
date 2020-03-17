@@ -206,7 +206,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
 
                                 state.raise(SyntaxError(pair.into()))?;
                             },
-                            "let" => {
+                            "let*" => {
                                 if let Ok(args) = Pair::try_from(pair.cdr) {
                                     let bindings = args.car;
 
@@ -235,7 +235,6 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                                                     state.push(body);
                                                                     state.push(bindings.cdr);
                                                                     state.push(binder);
-                                                                    state.push(0u16);
                                                                     state.push_env();
                                                                     state.push(FrameTag::Let);
                                                                     state.push(expr);
@@ -501,12 +500,15 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         },
         FrameTag::Let => {
             if value_count == 1 {
-                let value = state.pop().unwrap();
-                let i: usize = state.get(2).unwrap().try_into().unwrap();
-
-                if let Ok(name) = Syntax::try_from(state.get(3 + i).unwrap()) {
+                if let Ok(name) = Syntax::try_from(state.get(3).unwrap()) {
                     if let Ok(name) = Symbol::try_from(name.datum) {
-                        let bindings = state.get(4 + i).unwrap();
+                        state.insert_after(1, name.into());
+                        unsafe {
+                            state.push_scope();
+                            state.define();
+                        }
+
+                        let bindings = state.get(3).unwrap();
 
                         if let Ok(bindings) = Pair::try_from(bindings) {
                             let binding = bindings.car;
@@ -519,16 +521,9 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
                                         let expr = exprs.car;
 
                                         if exprs.cdr == Value::NIL {
-                                            state.put(3 + i, binder);
-                                            state.put(4 + i, bindings.cdr);
-                                            state.pop(); // frame tag
-                                            state.pop(); // env
-                                            state.pop(); // i
-                                            state.push(name);
-                                            state.push(value);
-                                            state.push(Value::try_from(i + 2).unwrap());
-                                            state.push_env();
-                                            state.push(FrameTag::Let);
+                                            state.put(3, bindings.cdr);
+                                            state.put(2, binder);
+                                            state.put(1, state.env().into());
                                             state.push(expr);
                                             return Ok(Op::Eval);
                                         }
@@ -540,15 +535,6 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
                         } else if bindings == Value::NIL {
                             state.pop(); // frame tag
                             state.pop(); // env
-                            state.pop(); // i
-                            state.push(name);
-                            state.push(value);
-                            unsafe { state.push_scope() };
-                            // FIXME: It is an error for a <variable> to appear more
-                            // than once
-                            for _ in 0..i / 2 + 1 {
-                                unsafe { state.define() };
-                            }
                             state.pop(); // name
                             state.pop(); // bindings
                             return Ok(Op::Eval);
@@ -557,7 +543,7 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
                         }
                     }
 
-                    state.raise(SyntaxError(state.get(3 + i).unwrap()))?;
+                    state.raise(SyntaxError(state.get(3).unwrap()))?;
                 }
 
                 state.raise(RuntimeError::Retc { cont_params: (1, false), got: value_count })

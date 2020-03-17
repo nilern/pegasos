@@ -32,6 +32,7 @@ impl Error {
 pub enum ErrorWhat {
     Lex(lexer::Error),
     Expected { expected: lexer::Token, actual: lexer::Token },
+    Unexpected(lexer::Token),
     Eof
 }
 
@@ -41,6 +42,8 @@ impl Display for ErrorWhat {
             ErrorWhat::Lex(lex_err) => write!(f, "Lexical error: {}.", lex_err),
             ErrorWhat::Expected { expected, actual } =>
                 write!(f, "Was expecting '{}' but got '{}'.", expected, actual),
+            ErrorWhat::Unexpected(tok) =>
+                write!(f, "Unexpected '{}'.", tok),
             ErrorWhat::Eof => write!(f, "Incomplete datum, input ran out.")
         }
     }
@@ -260,8 +263,19 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 } else {
                     unreachable!()
                 },
+            Some(Ok((pos, tok @ RParen))) => Err(Error {
+                what: ErrorWhat::Unexpected(tok),
+                at: Loc { source: state.pop().unwrap(), pos }
+            }),
+            Some(Ok((pos, tok @ Dot))) => Err(Error {
+                what: ErrorWhat::Unexpected(tok),
+                at: Loc { source: state.pop().unwrap(), pos }
+            }),
+            Some(Ok((pos, tok @ Const(_)))) => Err(Error {
+                what: ErrorWhat::Unexpected(tok),
+                at: Loc { source: state.pop().unwrap(), pos }
+            }),
             Some(Err(lex_err)) => Err(Error::from_lex(lex_err, state.pop().unwrap())),
-            Some(_) => unimplemented!(),
             None => {
                 state.pop().unwrap();
                 Ok(None)

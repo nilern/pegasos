@@ -4,7 +4,7 @@
 
 (define length
   (lambda (ls)
-    (let ((loop #f))
+    (let* ((loop #f))
       (begin
         (set! loop (lambda (ls len)
                      (if (null? ls)

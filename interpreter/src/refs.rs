@@ -292,7 +292,7 @@ impl FrameTag {
             CondBranch => (3, false),
             Define => (2, false),
             Set => (2, false),
-            Let => (4, true),
+            Let => (4, false),
             Arg => (2, true),
             Stmt => (2, false),
             CallWithValues => (2, false)

@@ -49,7 +49,7 @@
 
 (define type
   (lambda (v)
-    (let ((i (%immediate-type-index v)))
+    (let* ((i (%immediate-type-index v)))
       (if (eq? i 1)
         (let ((h (%heap-type-index v)))
           (if (eq? h 7)
@@ -59,9 +59,9 @@
 
 (define type-hash
   (lambda (v)
-    (let ((i (%immediate-type-index v)))
+    (let* ((i (%immediate-type-index v)))
       (if (eq? i 1)
-        (let ((h (%heap-type-index v)))
+        (let* ((h (%heap-type-index v)))
           (if (eq? h 7)
             (%identity-hash (%slot-ref v 0))
             (fx+ 32 h)))
