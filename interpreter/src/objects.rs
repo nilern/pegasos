@@ -100,6 +100,7 @@ impl TryFrom<usize> for Code {
 // ---
 
 pub trait Heaped {
+    const TYPE: BuiltInType;
     const TAG: HeapTag;
 }
 
@@ -338,6 +339,7 @@ pub struct VectorData {
 }
 
 impl Heaped for VectorData {
+    const TYPE: BuiltInType = BuiltInType::Vector;
     const TAG: HeapTag = HeapTag::Vector;
 }
 
@@ -371,6 +373,7 @@ pub struct PgsStringData {
 }
 
 impl Heaped for PgsStringData {
+    const TYPE: BuiltInType = BuiltInType::String;
     const TAG: HeapTag = HeapTag::String;
 }
 
@@ -413,6 +416,7 @@ pub struct SymbolData {
 }
 
 impl Heaped for SymbolData {
+    const TYPE: BuiltInType = BuiltInType::Symbol;
     const TAG: HeapTag = HeapTag::Symbol;
 }
 
@@ -573,6 +577,7 @@ pub struct PairData {
 }
 
 impl Heaped for PairData {
+    const TYPE: BuiltInType = BuiltInType::Pair;
     const TAG: HeapTag = HeapTag::Pair;
 }
 
@@ -614,6 +619,7 @@ pub struct ClosureData {
 }
 
 impl Heaped for ClosureData {
+    const TYPE: BuiltInType = BuiltInType::Closure;
     const TAG: HeapTag = HeapTag::Closure;
 }
 
@@ -659,6 +665,7 @@ pub struct BindingsData {
 }
 
 impl Heaped for BindingsData {
+    const TYPE: BuiltInType = BuiltInType::Bindings;
     const TAG: HeapTag = HeapTag::Bindings;
 }
 
@@ -813,6 +820,7 @@ pub struct SyntaxObject {
 }
 
 impl Heaped for SyntaxObject {
+    const TYPE: BuiltInType = BuiltInType::Syntax;
     const TAG: HeapTag = HeapTag::Syntax;
 }
 
@@ -895,6 +903,7 @@ pub struct RecordData {
 }
 
 impl Heaped for RecordData {
+    const TYPE: BuiltInType = BuiltInType::Record;
     const TAG: HeapTag = HeapTag::Record;
 }
 

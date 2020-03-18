@@ -111,23 +111,20 @@ fn apply(state: &mut State) -> Result<Op, PgsError> {
     let argc: usize = state.pop().unwrap().try_into().unwrap();
 
     if argc >= 2 {
-        if Closure::try_from(state.get(argc - 1).unwrap()).is_ok() {
-            let ls = state.pop().unwrap();
-            let mut final_argc = argc - 2;
-            let mut cars = Cars::of(ls);
+        let f: Closure = state.get(argc - 1).unwrap().try_into()?;
+        let ls = state.pop().unwrap();
+        let mut final_argc = argc - 2;
+        let mut cars = Cars::of(ls);
 
-            for arg in &mut cars {
-                state.push(arg);
-                final_argc += 1;
-            }
+        for arg in &mut cars {
+            state.push(arg);
+            final_argc += 1;
+        }
 
-            if cars.remainder() == Value::NIL {
-                state.remove(final_argc + 1).unwrap(); // callee
-                state.push(<usize as TryInto<Value>>::try_into(final_argc)?);
-                Ok(Op::Apply)
-            } else {
-                unimplemented!()
-            }
+        if cars.remainder() == Value::NIL {
+            state.remove(final_argc + 1).unwrap(); // callee
+            state.push(<usize as TryInto<Value>>::try_into(final_argc)?);
+            Ok(Op::Apply)
         } else {
             unimplemented!()
         }
@@ -295,7 +292,7 @@ fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
         1 => {
             let a: isize = state.pop().unwrap().try_into()?;
             state.pop().unwrap(); // callee
-            state.push(Value::try_from(a.checked_neg().unwrap()).unwrap()); // OPTIMIZE
+            state.push(Value::try_from(a.checked_neg().unwrap())?); // OPTIMIZE
             state.push(1u16);
             Ok(Op::Continue)
         },

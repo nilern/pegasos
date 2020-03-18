@@ -424,17 +424,17 @@ impl TryFrom<Value> for HeapValue<()> {
 }
 
 impl<T: Heaped + ?Sized> TryFrom<Value> for HeapValue<T> {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         if let Ok(oref) = HeapValue::<()>::try_from(value) {
             if oref.heap_tag() == T::TAG {
                 Ok(HeapValue { value: oref.value, _phantom: PhantomData })
             } else {
-                Err(())
+                Err(RuntimeError::Type { value, expected: T::TYPE })
             }
         } else {
-            Err(())
+            Err(RuntimeError::Type { value, expected: T::TYPE })
         }
     }
 }
