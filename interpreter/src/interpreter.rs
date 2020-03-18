@@ -23,6 +23,7 @@ impl Display for SyntaxError {
 #[derive(Debug)]
 pub enum RuntimeError {
     Type { expected: BuiltInType, value: Value },
+    Overflow(BuiltInType),
     Bounds { value: Value, index: isize, len: usize },
     Argc { callee: Value, params: (usize, bool), got: usize },
     Retc { cont_params: (usize, bool), got: usize },
@@ -37,6 +38,7 @@ impl Display for RuntimeError {
         match self {
             RuntimeError::Type { expected, value } =>
                 write!(f, "Type error: {} is not of type {}", value, expected),
+            RuntimeError::Overflow(t) => write!(f, "{} overflow", t),
             RuntimeError::Bounds { value, index, len } =>
                 write!(f, "Out of bounds indexing {} of length {} with {}", value, len, index),
             RuntimeError::Argc { callee, params: (paramc, variadic), got } => {

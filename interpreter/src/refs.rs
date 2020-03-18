@@ -149,7 +149,7 @@ impl From<i16> for Value {
 }
 
 impl TryFrom<isize> for Value {
-    type Error = ();
+    type Error = RuntimeError;
 
     fn try_from(n: isize) -> Result<Self, Self::Error> {
         if n >> Self::BOUNDS_SHIFT == 0 || n >> Self::BOUNDS_SHIFT == !0 as isize
@@ -157,7 +157,7 @@ impl TryFrom<isize> for Value {
         {
             Ok(Self((n << Self::SHIFT) as usize | BaseTag::Fixnum as usize))
         } else {
-            Err(())
+            Err(RuntimeError::Overflow(BuiltInType::Fixnum))
         }
     }
 }
@@ -175,14 +175,14 @@ impl TryInto<isize> for Value {
 }
 
 impl TryFrom<usize> for Value {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_from(n: usize) -> Result<Self, Self::Error> {
         if n >> Self::BOUNDS_SHIFT == 0 {
             // fits in 30/62 bits, OPTIMIZE
             Ok(Self(n << Self::SHIFT | BaseTag::Fixnum as usize))
         } else {
-            Err(())
+            Err(RuntimeError::Overflow(BuiltInType::Fixnum))
         }
     }
 }
@@ -200,7 +200,7 @@ impl TryInto<usize> for Value {
 }
 
 impl TryFrom<fsize> for Value {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_from(n: fsize) -> Result<Self, Self::Error> {
         if unimplemented!() {
@@ -209,7 +209,7 @@ impl TryFrom<fsize> for Value {
                 unsafe { mem::transmute::<_, usize>(n) } << Self::SHIFT | BaseTag::Flonum as usize
             ))
         } else {
-            Err(())
+            Err(RuntimeError::Overflow(BuiltInType::Flonum))
         }
     }
 }

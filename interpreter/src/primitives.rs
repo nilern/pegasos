@@ -123,7 +123,7 @@ fn apply(state: &mut State) -> Result<Op, PgsError> {
 
             if cars.remainder() == Value::NIL {
                 state.remove(final_argc + 1).unwrap(); // callee
-                state.push(<usize as TryInto<Value>>::try_into(final_argc).unwrap());
+                state.push(<usize as TryInto<Value>>::try_into(final_argc)?);
                 Ok(Op::Apply)
             } else {
                 unimplemented!()
@@ -283,7 +283,7 @@ primitive! { fx_lt state (a: isize, b: isize) {
 }}
 
 primitive! { fx_add state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a.checked_add(b).expect("overflow")).unwrap()); // OPTIMIZE
+    state.push(<isize as TryInto<Value>>::try_into(a.checked_add(b).expect("overflow"))?); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
@@ -303,9 +303,7 @@ fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
             let b: isize = state.pop().unwrap().try_into()?;
             let a: isize = state.pop().unwrap().try_into()?;
             state.pop().unwrap(); // callee
-            state.push(
-                <isize as TryInto<Value>>::try_into(a.checked_sub(b).expect("overflow")).unwrap()
-            ); // OPTIMIZE
+            state.push(<isize as TryInto<Value>>::try_into(a.checked_sub(b).expect("overflow"))?); // OPTIMIZE
             state.push(1u16);
             Ok(Op::Continue)
         },
@@ -321,13 +319,13 @@ fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
 }
 
 primitive! { bitwise_and state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a & b).unwrap()); // OPTIMIZE
+    state.push(<isize as TryInto<Value>>::try_into(a & b)?); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
 primitive! { bitwise_or state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a | b).unwrap()); // OPTIMIZE
+    state.push(<isize as TryInto<Value>>::try_into(a | b)?); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
@@ -338,7 +336,7 @@ primitive! { arithmetic_shift state (n: isize, count: isize) {
     } else {
         n.checked_shl(count as u32).expect("overflow")
     };
-    state.push(<isize as TryInto<Value>>::try_into(shifted).unwrap()); // OPTIMIZE
+    state.push(<isize as TryInto<Value>>::try_into(shifted)?); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}

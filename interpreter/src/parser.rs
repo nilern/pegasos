@@ -157,7 +157,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                             state.cons();
                         }
                         let loc = Loc { source: state.remove(1).unwrap(), pos }; // { datum }
-                        state.push_syntax(loc); // { syntax }
+                        state.push_syntax(loc).unwrap(); // { syntax }
                     },
                     Err(_) => {
                         for _ in 0..count + 1 {
@@ -208,7 +208,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                     Ok(_) => {
                         state.vector(len); // { source datum }
                         let loc = Loc { source: state.remove(1).unwrap(), pos }; // { datum }
-                        state.push_syntax(loc); // { syntax }
+                        state.push_syntax(loc).unwrap(); // { syntax }
                     },
                     Err(_) =>
                         for _ in 0..len + 1 {
@@ -235,20 +235,20 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 } // { source datum }
                 state.push_symbol("quote"); // { source datum 'quote }
                 let loc = Loc { source: state.get(2).unwrap(), pos };
-                state.push_syntax(loc); // { source datum #'quote }
+                state.push_syntax(loc).unwrap(); // { source datum #'quote }
                 state.swap(); // { source 'quote datum }
                 state.push(Value::NIL); // { source 'quote datum '() }
                 state.cons();
                 state.cons();
                 let loc = Loc { source: state.remove(1).unwrap(), pos }; // { datum }
-                state.push_syntax(loc); // { syntax }
+                state.push_syntax(loc).unwrap(); // { syntax }
                 Ok(Some(()))
             },
             Some(Ok((_, Identifier(_)))) =>
                 if let Some(Ok((pos, Identifier(sym)))) = self.lexer.next(state) {
                     let loc = Loc { source: state.pop().unwrap(), pos };
                     state.push(sym);
-                    state.push_syntax(loc);
+                    state.push_syntax(loc).unwrap();
                     Ok(Some(()))
                 } else {
                     unreachable!()
@@ -257,7 +257,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 if let Some(Ok((pos, Const(v)))) = self.lexer.next(state) {
                     let loc = Loc { source: state.pop().unwrap(), pos };
                     state.push(v);
-                    state.push_syntax(loc);
+                    state.push_syntax(loc).unwrap();
                     Ok(Some(()))
                 } else {
                     unreachable!()
@@ -318,11 +318,11 @@ impl<I: Iterator<Item = char>> Parser<I> {
                     } // { source data }
                     state.push_symbol("begin"); // { source data 'begin }
                     let loc = Loc { source: state.get(2).unwrap(), pos: Pos::default() };
-                    state.push_syntax(loc); // { source data #'begin }
+                    state.push_syntax(loc).unwrap(); // { source data #'begin }
                     state.swap();
                     state.cons();
                     let loc = Loc { source: state.remove(1).unwrap(), pos: Pos::default() }; // { data }
-                    state.push_syntax(loc);
+                    state.push_syntax(loc).unwrap();
                     return Ok(());
                 },
                 Err(err) => {

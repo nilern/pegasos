@@ -169,10 +169,10 @@ impl State {
         self.push(f);
     }
 
-    pub unsafe fn push_syntax(&mut self, loc: Loc) {
+    pub unsafe fn push_syntax(&mut self, loc: Loc) -> Result<(), RuntimeError> {
         let datum = self.peek().unwrap();
-        let line = loc.pos.line.try_into().unwrap();
-        let column = loc.pos.column.try_into().unwrap();
+        let line = loc.pos.line.try_into()?;
+        let column = loc.pos.column.try_into()?;
         self.push(loc.source);
         let syntax = if let Some(syntax) =
             Syntax::new(self, datum, Value::FALSE, loc.source, line, column)
@@ -187,6 +187,7 @@ impl State {
             Syntax::new(self, datum, Value::FALSE, source, line, column).unwrap()
         };
         self.push(syntax);
+        Ok(())
     }
 
     pub unsafe fn record(&mut self, len: usize) {
