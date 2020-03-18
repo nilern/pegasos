@@ -270,10 +270,6 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 what: ErrorWhat::Unexpected(tok),
                 at: Loc { source: state.pop().unwrap(), pos }
             }),
-            Some(Ok((pos, tok @ Const(_)))) => Err(Error {
-                what: ErrorWhat::Unexpected(tok),
-                at: Loc { source: state.pop().unwrap(), pos }
-            }),
             Some(Err(lex_err)) => Err(Error::from_lex(lex_err, state.pop().unwrap())),
             None => {
                 state.pop().unwrap();

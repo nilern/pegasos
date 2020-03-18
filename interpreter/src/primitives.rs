@@ -1,5 +1,4 @@
 use std::convert::{TryFrom, TryInto};
-use std::io;
 use std::mem::transmute;
 use std::ptr;
 

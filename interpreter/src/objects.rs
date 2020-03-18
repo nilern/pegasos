@@ -583,13 +583,6 @@ impl Pair {
             size_of::<PairData>() / size_of::<Value>()
         )))
     }
-
-    pub fn cons(state: &mut State, car: Value, cdr: Value) -> Option<Self> {
-        Self::new(state).map(|mut res| {
-            *res = PairData { car, cdr };
-            res
-        })
-    }
 }
 
 pub struct Cars(Value);
@@ -965,7 +958,9 @@ mod tests {
         let a = Value::from(5i16);
         let b = Value::from(8i16);
 
-        let p = Pair::cons(&mut state, a, b).unwrap();
+        let mut p = Pair::new(&mut state).unwrap();
+        p.car = a;
+        p.cdr = b;
 
         assert_eq!(p.car, a);
         assert_eq!(p.cdr, b);
