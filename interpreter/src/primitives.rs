@@ -239,26 +239,17 @@ fn make_vector(state: &mut State) -> Result<Op, PgsError> {
     let argc: usize = state.pop().unwrap().try_into().unwrap();
 
     match argc {
-        1 =>
-            if let Ok(len) = <Value as TryInto<usize>>::try_into(state.pop().unwrap()) {
-                unsafe {
-                    state.push_vector(len);
-                }
-            } else {
-                unimplemented!()
-            },
+        1 => {
+            let len: usize = state.pop().unwrap().try_into()?;
+            unsafe { state.push_vector(len) };
+        },
         2 => {
             let v = state.pop().unwrap();
-            if let Ok(len) = <Value as TryInto<usize>>::try_into(state.pop().unwrap()) {
-                for _ in 0..len {
-                    state.push(v);
-                }
-                unsafe {
-                    state.vector(len);
-                }
-            } else {
-                unimplemented!()
+            let len: usize = state.pop().unwrap().try_into()?;
+            for _ in 0..len {
+                state.push(v);
             }
+            unsafe { state.vector(len) };
         },
         argc =>
         // TODO: arity is actually 1 | 2, not 2:
@@ -303,15 +294,15 @@ fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
 
     match argc {
         1 => {
-            let a: isize = state.pop().unwrap().try_into().unwrap();
+            let a: isize = state.pop().unwrap().try_into()?;
             state.pop().unwrap(); // callee
             state.push(Value::try_from(a.checked_neg().unwrap()).unwrap()); // OPTIMIZE
             state.push(1u16);
             Ok(Op::Continue)
         },
         2 => {
-            let b: isize = state.pop().unwrap().try_into().unwrap();
-            let a: isize = state.pop().unwrap().try_into().unwrap();
+            let b: isize = state.pop().unwrap().try_into()?;
+            let a: isize = state.pop().unwrap().try_into()?;
             state.pop().unwrap(); // callee
             state.push(
                 <isize as TryInto<Value>>::try_into(a.checked_sub(b).expect("overflow")).unwrap()

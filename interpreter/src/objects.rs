@@ -50,6 +50,33 @@ impl HeapTag {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum BuiltInType {
+    Fixnum,
+    Flonum,
+    Char,
+    Bool,
+    Nil,
+    Unbound,
+    Unspecified,
+    Eof,
+    FrameTag,
+    String,
+    Symbol,
+    Pair,
+    Vector,
+    Closure,
+    Bindings,
+    Syntax,
+    Record
+}
+
+impl Display for BuiltInType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", format!("{:?}", self).to_lowercase())
+    }
+}
+
 // ---
 
 #[repr(usize)]

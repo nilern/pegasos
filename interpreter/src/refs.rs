@@ -9,7 +9,8 @@ use std::ops::{Deref, DerefMut};
 use std::slice;
 
 use super::gc::{HeapObject, ObjectReference};
-use super::objects::{HeapTag, Heaped, Object, UnpackedHeapValue};
+use super::interpreter::RuntimeError;
+use super::objects::{BuiltInType, HeapTag, Heaped, Object, UnpackedHeapValue};
 use super::util::fsize;
 
 // ---
@@ -148,7 +149,7 @@ impl From<i16> for Value {
 }
 
 impl TryFrom<isize> for Value {
-    type Error = (); // FIXME
+    type Error = ();
 
     fn try_from(n: isize) -> Result<Self, Self::Error> {
         if n >> Self::BOUNDS_SHIFT == 0 || n >> Self::BOUNDS_SHIFT == !0 as isize
@@ -162,13 +163,13 @@ impl TryFrom<isize> for Value {
 }
 
 impl TryInto<isize> for Value {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_into(self) -> Result<isize, Self::Error> {
         if self.base_tag() == BaseTag::Fixnum {
             Ok(self.0 as isize >> Self::SHIFT)
         } else {
-            Err(())
+            Err(RuntimeError::Type { value: self, expected: BuiltInType::Fixnum })
         }
     }
 }
@@ -187,13 +188,13 @@ impl TryFrom<usize> for Value {
 }
 
 impl TryInto<usize> for Value {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_into(self) -> Result<usize, Self::Error> {
         if self.base_tag() == BaseTag::Fixnum {
             Ok(self.0 >> Self::SHIFT)
         } else {
-            Err(())
+            Err(RuntimeError::Type { value: self, expected: BuiltInType::Fixnum })
         }
     }
 }
@@ -218,13 +219,13 @@ impl From<char> for Value {
 }
 
 impl TryInto<char> for Value {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_into(self) -> Result<char, Self::Error> {
         if self.0 & Self::EXT_MASK == Tag::Char as usize {
             Ok(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) })
         } else {
-            Err(())
+            Err(RuntimeError::Type { value: self, expected: BuiltInType::Char })
         }
     }
 }
@@ -234,13 +235,13 @@ impl From<bool> for Value {
 }
 
 impl TryInto<bool> for Value {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_into(self) -> Result<bool, Self::Error> {
         if self.0 & Self::EXT_MASK == Tag::Bool as usize {
             Ok(self.0 >> Self::EXT_SHIFT != 0)
         } else {
-            Err(())
+            Err(RuntimeError::Type { value: self, expected: BuiltInType::Char })
         }
     }
 }

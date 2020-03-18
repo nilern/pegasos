@@ -171,15 +171,12 @@ impl State {
 
     pub unsafe fn push_syntax(&mut self, loc: Loc) {
         let datum = self.peek().unwrap();
+        let line = loc.pos.line.try_into().unwrap();
+        let column = loc.pos.column.try_into().unwrap();
         self.push(loc.source);
-        let syntax = if let Some(syntax) = Syntax::new(
-            self,
-            datum,
-            Value::FALSE,
-            loc.source,
-            loc.pos.line.try_into().unwrap(),
-            loc.pos.column.try_into().unwrap()
-        ) {
+        let syntax = if let Some(syntax) =
+            Syntax::new(self, datum, Value::FALSE, loc.source, line, column)
+        {
             self.pop().unwrap(); // source
             self.pop().unwrap(); // datum
             syntax
@@ -187,15 +184,7 @@ impl State {
             self.collect_garbage();
             let source = self.pop().unwrap();
             let datum = self.pop().unwrap();
-            Syntax::new(
-                self,
-                datum,
-                Value::FALSE,
-                source,
-                loc.pos.line.try_into().unwrap(),
-                loc.pos.column.try_into().unwrap()
-            )
-            .unwrap()
+            Syntax::new(self, datum, Value::FALSE, source, line, column).unwrap()
         };
         self.push(syntax);
     }
@@ -358,7 +347,8 @@ impl<'a> Iterator for Frames<'a> {
             let tag = unsafe { transmute::<Value, FrameTag>(self.stack[i]) };
             let (base_len, dynamic) = tag.framesize();
             let len = if dynamic {
-                let dyn_len: usize = self.stack[i - 2].try_into().unwrap();
+                let dyn_len: usize =
+                    self.stack[i - 2].try_into().expect("Stack frame length corrupted");
                 base_len + dyn_len + 1
             } else {
                 base_len
@@ -404,12 +394,9 @@ mod tests {
 
         let mut ls = state.pop().unwrap();
         for i in 0..n {
-            if let Ok(pair) = Pair::try_from(ls) {
-                assert_eq!(pair.car, i.into());
-                ls = pair.cdr;
-            } else {
-                assert!(false);
-            }
+            let pair = Pair::try_from(ls).unwrap();
+            assert_eq!(pair.car, i.into());
+            ls = pair.cdr;
         }
         assert_eq!(ls, Value::NIL);
     }

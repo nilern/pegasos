@@ -6,7 +6,9 @@ use std::mem::transmute;
 
 use super::error::PgsError;
 use super::lexer::Lexer;
-use super::objects::{Closure, Code, Pair, PgsString, Symbol, Syntax, UnpackedHeapValue, Vector};
+use super::objects::{
+    BuiltInType, Closure, Code, Pair, PgsString, Symbol, Syntax, UnpackedHeapValue, Vector
+};
 use super::parser::Parser;
 use super::refs::{FrameTag, UnpackedValue, Value};
 use super::state::State;
@@ -20,6 +22,7 @@ impl Display for SyntaxError {
 
 #[derive(Debug)]
 pub enum RuntimeError {
+    Type { expected: BuiltInType, value: Value },
     Bounds { value: Value, index: isize, len: usize },
     Argc { callee: Value, params: (usize, bool), got: usize },
     Retc { cont_params: (usize, bool), got: usize },
@@ -32,6 +35,8 @@ pub enum RuntimeError {
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
+            RuntimeError::Type { expected, value } =>
+                write!(f, "Type error: {} is not of type {}", value, expected),
             RuntimeError::Bounds { value, index, len } =>
                 write!(f, "Out of bounds indexing {} of length {} with {}", value, len, index),
             RuntimeError::Argc { callee, params: (paramc, variadic), got } => {
@@ -442,7 +447,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
 }
 
 fn continu(state: &mut State) -> Result<Op, PgsError> {
-    let value_count = state.pop().unwrap().try_into().unwrap();
+    let value_count: usize = state.pop().unwrap().try_into().unwrap();
     state.set_env(state.get(value_count + 1).unwrap().try_into().unwrap());
     match unsafe { transmute::<Value, FrameTag>(state.get(value_count).unwrap()) } {
         FrameTag::Done => {
@@ -785,7 +790,7 @@ mod tests {
         let mut state = State::new(&[], 1 << 14, 1 << 20); // HACK: 14 because heap is ungrowing ATM.
 
         let mut parser =
-            Parser::new(Lexer::new("(let ((a (if #f 5 8)) (b #f)) (if b 42 a))".chars()));
+            Parser::new(Lexer::new("(let* ((a (if #f 5 8)) (b #f)) (if b 42 a))".chars()));
 
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
