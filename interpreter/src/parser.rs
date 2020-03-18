@@ -42,8 +42,7 @@ impl Display for ErrorWhat {
             ErrorWhat::Lex(lex_err) => write!(f, "Lexical error: {}.", lex_err),
             ErrorWhat::Expected { expected, actual } =>
                 write!(f, "Was expecting '{}' but got '{}'.", expected, actual),
-            ErrorWhat::Unexpected(tok) =>
-                write!(f, "Unexpected '{}'.", tok),
+            ErrorWhat::Unexpected(tok) => write!(f, "Unexpected '{}'.", tok),
             ErrorWhat::Eof => write!(f, "Incomplete datum, input ran out.")
         }
     }

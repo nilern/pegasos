@@ -51,7 +51,7 @@
   (lambda (v)
     (let* ((i (%immediate-type-index v)))
       (if (eq? i 1)
-        (let ((h (%heap-type-index v)))
+        (let* ((h (%heap-type-index v)))
           (if (eq? h 7)
             (%slot-ref v 0)
             (vector-ref builtin-types (fx+ 32 h))))

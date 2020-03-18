@@ -1,14 +1,15 @@
 use std::convert::{TryFrom, TryInto};
 use std::io;
 use std::mem::transmute;
+use std::ptr;
 
 use super::error::PgsError;
 use super::interpreter::{Op, Primitive, RuntimeError};
-use super::objects::{Cars, Closure, Pair, Symbol};
+use super::objects::{Cars, Closure, Pair, Symbol, Vector};
 use super::refs::{FrameTag, HeapValue, Tag, Value};
 use super::state::State;
 
-pub const PRIMITIVES: [(&str, Primitive); 24] = [
+pub const PRIMITIVES: [(&str, Primitive); 27] = [
     ("void", void),
     ("eq?", eq),
     ("%identity-hash", identity_hash),
@@ -28,11 +29,14 @@ pub const PRIMITIVES: [(&str, Primitive); 24] = [
     ("car", car),
     ("cdr", cdr),
     ("make-vector", make_vector),
+    ("vector-copy!", vector_copy),
     ("fx<?", fx_lt),
     ("fx+", fx_add),
     ("fx-", fx_sub),
     ("bitwise-and", bitwise_and),
-    ("arithmetic-shift", arithmetic_shift)
+    ("bitwise-or", bitwise_or),
+    ("arithmetic-shift", arithmetic_shift),
+    ("bit-count", bit_count)
 ];
 
 macro_rules! count {
@@ -185,10 +189,14 @@ primitive! { object_length state (v: HeapValue<()>) {
     Ok(Op::Continue)
 }}
 
-primitive! { slot_ref state (o: HeapValue<()>, i: usize) {
-    state.push(*o.slots().get(i).unwrap());
-    state.push(1u16);
-    Ok(Op::Continue)
+primitive! { slot_ref state (o: HeapValue<()>, i: isize) {
+    if let Some(&v) = o.slots().get(i as usize) {
+        state.push(v);
+        state.push(1u16);
+        Ok(Op::Continue)
+    } else {
+        Err(RuntimeError::Bounds { value: o.into(), index: i, len: o.slots().len() }.into())
+    }
 }}
 
 primitive! { slot_set state (o: HeapValue<()>, i: usize, v: Value) {
@@ -267,6 +275,17 @@ fn make_vector(state: &mut State) -> Result<Op, PgsError> {
     Ok(Op::Continue)
 }
 
+primitive! { vector_copy state (to: Vector, at: isize, from: Vector, start: isize, end: isize) {
+    assert!(0 <= at && at as usize <= to.len());
+    assert!(0 <= start && start as usize <= from.len());
+    assert!(start <= end && end as usize <= from.len());
+
+    unsafe { ptr::copy((from.data() as *const Value).offset(start), (to.data() as *mut Value).offset(at), (end - start) as usize); }
+    state.push(Value::UNSPECIFIED);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
 primitive! { fx_lt state (a: isize, b: isize) {
     state.push(a < b); // OPTIMIZE
     state.push(1u16);
@@ -279,14 +298,46 @@ primitive! { fx_add state (a: isize, b: isize) {
     Ok(Op::Continue)
 }}
 
-primitive! { fx_sub state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a.checked_sub(b).expect("overflow")).unwrap()); // OPTIMIZE
+fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.pop().unwrap().try_into().unwrap();
+
+    match argc {
+        1 => {
+            let a: isize = state.pop().unwrap().try_into().unwrap();
+            state.pop().unwrap(); // callee
+            state.push(Value::try_from(a.checked_neg().unwrap()).unwrap()); // OPTIMIZE
+            state.push(1u16);
+            Ok(Op::Continue)
+        },
+        2 => {
+            let b: isize = state.pop().unwrap().try_into().unwrap();
+            let a: isize = state.pop().unwrap().try_into().unwrap();
+            state.pop().unwrap(); // callee
+            state.push(
+                <isize as TryInto<Value>>::try_into(a.checked_sub(b).expect("overflow")).unwrap()
+            ); // OPTIMIZE
+            state.push(1u16);
+            Ok(Op::Continue)
+        },
+        _ =>
+        // FIXME: arity is actually 1 | 2
+            Err(RuntimeError::Argc {
+                callee: state.get(argc).unwrap(),
+                params: (2, false),
+                got: argc
+            }
+            .into()),
+    }
+}
+
+primitive! { bitwise_and state (a: isize, b: isize) {
+    state.push(<isize as TryInto<Value>>::try_into(a & b).unwrap()); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { bitwise_and state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a & b).unwrap()); // OPTIMIZE
+primitive! { bitwise_or state (a: isize, b: isize) {
+    state.push(<isize as TryInto<Value>>::try_into(a | b).unwrap()); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
@@ -298,6 +349,12 @@ primitive! { arithmetic_shift state (n: isize, count: isize) {
         n.checked_shl(count as u32).expect("overflow")
     };
     state.push(<isize as TryInto<Value>>::try_into(shifted).unwrap()); // OPTIMIZE
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { bit_count state (n: isize) {
+    state.push(n.count_ones() as u16);
     state.push(1u16);
     Ok(Op::Continue)
 }}

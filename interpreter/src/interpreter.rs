@@ -20,6 +20,7 @@ impl Display for SyntaxError {
 
 #[derive(Debug)]
 pub enum RuntimeError {
+    Bounds { value: Value, index: isize, len: usize },
     Argc { callee: Value, params: (usize, bool), got: usize },
     Retc { cont_params: (usize, bool), got: usize },
     Uncallable(Value),
@@ -31,6 +32,8 @@ pub enum RuntimeError {
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
+            RuntimeError::Bounds { value, index, len } =>
+                write!(f, "Out of bounds indexing {} of length {} with {}", value, len, index),
             RuntimeError::Argc { callee, params: (paramc, variadic), got } => {
                 write!(f, "{} expected ", callee)?;
                 if *variadic {

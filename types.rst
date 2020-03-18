@@ -1,6 +1,9 @@
 Types
 =====
 
+TODO: Actually, let's not have inheritance. We can just have multimethods as
+interfaces and data inheritance is only useful in very specific cases.
+
 * Record types (= ERR5RS record type descriptors)
 * Opaque types (most types like list, port etc.)
 * Abstract types (e.g. the numeric tower where ``integer?`` has

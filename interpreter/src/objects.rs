@@ -765,6 +765,10 @@ impl Bindings {
     fn capacity(self) -> usize { self.keys.len() }
 
     pub fn dump<W: io::Write>(self, dest: &mut W) -> io::Result<()> {
+        if let Ok(parent) = Bindings::try_from(self.parent) {
+            parent.dump(dest)?;
+        }
+
         for (k, v) in self.keys.iter().zip(self.values.iter()) {
             if *k != Self::VACANT {
                 writeln!(dest, "{} = {}", k, v)?;
