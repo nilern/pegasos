@@ -1,3 +1,5 @@
+(define null? (lambda (v) (eq? v '())))
+
 (define list (lambda xs xs))
 
 (define cadr (lambda (ls) (car (cdr ls))))

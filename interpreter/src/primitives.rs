@@ -8,15 +8,13 @@ use super::objects::{Cars, Closure, Pair, Symbol, Syntax, Vector};
 use super::refs::{FrameTag, HeapValue, Tag, Value};
 use super::state::State;
 
-pub const PRIMITIVES: [(&str, Primitive); 30] = [
+pub const PRIMITIVES: [(&str, Primitive); 28] = [
     ("void", void),
     ("eq?", eq),
     ("%identity-hash", identity_hash),
     ("apply", apply),
     ("call-with-values", call_with_values),
     ("values", values),
-    ("null?", is_null),
-    ("symbol?", is_symbol),
     ("%symbol-hash", symbol_hash),
     ("%immediate-type-index", immediate_tag),
     ("%heap-type-index", heap_tag),
@@ -151,18 +149,6 @@ fn values(state: &mut State) -> Result<Op, PgsError> {
     state.remove(argc + 1).unwrap(); // callee
     Ok(Op::Continue)
 }
-
-primitive! { is_null state (v: Value) {
-    state.push(v == Value::NIL);
-    state.push(1u16);
-    Ok(Op::Continue)
-}}
-
-primitive! { is_symbol state (v: Value) {
-    state.push(Symbol::try_from(v).is_ok());
-    state.push(1u16);
-    Ok(Op::Continue)
-}}
 
 primitive! { symbol_hash state (v: Symbol) {
     state.push(unsafe { transmute::<usize, Value>((v.hash as usize) << Value::SHIFT | Tag::Fixnum as usize) });
