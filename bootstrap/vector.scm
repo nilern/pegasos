@@ -20,6 +20,14 @@
         (vector-copy! vec* (fx+ i 1) vec i (vector-length vec))
         vec*))))
 
+(define vector-delete
+  (lambda (vec i)
+    (let* ((vec* (make-vector (fx+ (vector-length vec) 1))))
+      (begin
+        (vector-copy! vec* 0 vec 0 i)
+        (vector-copy! vec* i vec (fx+ i 1) (vector-length vec))
+        vec*))))
+
 (define vector-map
   (lambda (f vec)
     (let* ((len (vector-length vec))

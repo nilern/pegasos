@@ -4,11 +4,11 @@ use std::ptr;
 
 use super::error::PgsError;
 use super::interpreter::{Op, Primitive, RuntimeError};
-use super::objects::{Cars, Closure, Pair, Symbol, Vector};
+use super::objects::{Cars, Closure, Pair, Symbol, Syntax, Vector};
 use super::refs::{FrameTag, HeapValue, Tag, Value};
 use super::state::State;
 
-pub const PRIMITIVES: [(&str, Primitive); 27] = [
+pub const PRIMITIVES: [(&str, Primitive); 30] = [
     ("void", void),
     ("eq?", eq),
     ("%identity-hash", identity_hash),
@@ -32,10 +32,13 @@ pub const PRIMITIVES: [(&str, Primitive); 27] = [
     ("fx<?", fx_lt),
     ("fx+", fx_add),
     ("fx-", fx_sub),
+    ("fx*", fx_mul),
     ("bitwise-and", bitwise_and),
-    ("bitwise-or", bitwise_or),
+    ("bitwise-ior", bitwise_ior),
+    ("bitwise-xor", bitwise_xor),
     ("arithmetic-shift", arithmetic_shift),
-    ("bit-count", bit_count)
+    ("bit-count", bit_count),
+    ("make-syntax", make_syntax)
 ];
 
 macro_rules! count {
@@ -315,14 +318,26 @@ fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
     }
 }
 
+primitive! { fx_mul state (a: isize, b: isize) {
+    state.push(<isize as TryInto<Value>>::try_into(a.checked_mul(b).expect("overflow"))?); // OPTIMIZE
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
 primitive! { bitwise_and state (a: isize, b: isize) {
     state.push(<isize as TryInto<Value>>::try_into(a & b)?); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { bitwise_or state (a: isize, b: isize) {
+primitive! { bitwise_ior state (a: isize, b: isize) {
     state.push(<isize as TryInto<Value>>::try_into(a | b)?); // OPTIMIZE
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { bitwise_xor state (a: isize, b: isize) {
+    state.push(<isize as TryInto<Value>>::try_into(a ^ b)?); // OPTIMIZE
     state.push(1u16);
     Ok(Op::Continue)
 }}
@@ -359,3 +374,23 @@ fn record(state: &mut State) -> Result<Op, PgsError> {
             .into())
     }
 }
+
+primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line: Value, column: Value) {
+    let syntax = Syntax::new(state, datum, scopes, source, line, column).unwrap_or_else(|| {
+        state.push(datum);
+        state.push(scopes);
+        state.push(source);
+        state.push(line);
+        state.push(column);
+        unsafe { state.collect_garbage(); }
+        let column = state.pop().unwrap();
+        let line = state.pop().unwrap();
+        let source = state.pop().unwrap();
+        let scopes = state.pop().unwrap();
+        let datum = state.pop().unwrap();
+        Syntax::new(state, datum, scopes, source, line, column).unwrap()
+    });
+    state.push(syntax);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}

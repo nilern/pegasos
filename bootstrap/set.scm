@@ -46,6 +46,8 @@
     (%hash-set (comparator-equality-predicate comparator) (comparator-hash-function comparator)
                %empty-trie 0)))
 
+(define set-eq (lambda () (%hash-set eq? %identity-hash %empty-trie 0)))
+
 (define %hash-set-trie-member
   (lambda (equality trie element default hash shift)
     (if (%bitmap-node? trie)
@@ -81,7 +83,7 @@
             (call-with-values (lambda () (%hash-set-trie-adjoin size node element hash (fx+ shift %bitmap-node-bits)))
                               (lambda (node size)
                                 (values (%bitmap-node bitmap (vector-set nodes i node)) size))))
-          (values (%bitmap-node (bitwise-or bitmap bit) (vector-insert nodes i element))
+          (values (%bitmap-node (bitwise-ior bitmap bit) (vector-insert nodes i element))
                   (fx+ size 1))))
 
       (let* ((equality (%hash-set-equality element trie)))
@@ -108,4 +110,42 @@
                       (lambda (trie size)
                         (%hash-set (%hash-set-equality set) (%hash-set-hash set)
                                    trie size)))))
+
+(define %hash-set-trie-delete
+  (lambda (equality trie element hash shift)
+    (if (%bitmap-node? trie)
+      (let* ((bitmap (%bitmap-node-bitmap trie))
+             (nodes (%bitmap-node-nodes trie))
+             (bit (%bitmap-node-bitpos hash shift))
+             (i (%bitmap-node-bit-index bitmap bit)))
+        (if (not (eq? (bitwise-and bitmap bit) 0))
+          (let* ((node (vector-ref (%bitmap-node-nodes trie) i)))
+            (call-with-values (lambda () (%hash-set-trie-delete equality node element hash (fx+ shift %bitmap-node-bits)))
+                              (lambda (node change)
+                                (if (eq? change 'unchanged)
+                                  (values trie change)
+                                  (if (eq? change 'shrank)
+                                    (values (%bitmap-node bitmap (vector-set nodes i node)) change)
+                                    (values (%bitmap-node (bitwise-xor bitmap bit) (vector-delete nodes i)) ; 'gone
+                                            'shrank))))))
+          (values trie 'unchanged)))
+
+      (if (%collision-node? trie)
+        (%hash-set-collision-delete equality trie element hash shift)
+
+        (if (equality element trie)
+          (values trie 'gone)
+          (values trie 'unchanged))))))
+
+(define set-delete
+  (lambda (set element)
+    (call-with-values (lambda ()
+                        (%hash-set-trie-delete (%hash-set-equality set) (%hash-set-trie set) element
+                                               ((%hash-set-hash set) element) 0))
+                      (lambda (trie change)
+                        (if (eq? change 'unchanged)
+                          set
+                          (if (eq? change 'shrank)
+                             (%hash-set (%hash-set-equality set) (%hash-set-hash set) trie (fx- (set-size set) 1))
+                             (%hash-set (%hash-set-equality set) (%hash-set-hash set) %empty-trie 0))))))) ; 'gone
 

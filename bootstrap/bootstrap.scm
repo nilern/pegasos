@@ -7,4 +7,5 @@
 (include "comparator.scm")
 (include "hash-table.scm")
 (include "set.scm")
+(include "expander.scm")
 
