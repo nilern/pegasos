@@ -438,13 +438,8 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
             state.push(1u16);
             Ok(Op::Continue)
         },
-        UnpackedValue::Eof => {
-            state.push(1u16);
-            Ok(Op::Continue)
-        },
         UnpackedValue::Nil => state.raise(SyntaxError(Value::NIL)),
-        UnpackedValue::Unbound => unreachable!(),
-        UnpackedValue::FrameTag(_) => unreachable!()
+        UnpackedValue::Unbound => unreachable!()
     }
 }
 

@@ -334,7 +334,9 @@ impl<'a> Iterator for Frames<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if !self.done {
             loop {
-                if self.stack[self.index].is_frame_tag() {
+                if unimplemented!()
+                /* self.stack[self.index].is_frame_tag() */
+                {
                     break;
                 } else if self.index == 0 {
                     self.done = true;

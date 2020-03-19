@@ -59,8 +59,6 @@ pub enum BuiltInType {
     Nil,
     Unbound,
     Unspecified,
-    Eof,
-    FrameTag,
     String,
     Symbol,
     Pair,
@@ -886,9 +884,7 @@ impl Value {
             UnpackedValue::Bool(_) => self,
             UnpackedValue::Nil => self,
             UnpackedValue::Unbound => self,
-            UnpackedValue::Unspecified => self,
-            UnpackedValue::Eof => self,
-            UnpackedValue::FrameTag(_) => self
+            UnpackedValue::Unspecified => self
         }
     }
 }

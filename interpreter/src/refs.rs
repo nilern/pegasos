@@ -15,41 +15,31 @@ use super::util::fsize;
 
 // ---
 
-// TODO: Simplify tagging so that we uniformly use 3-bit tags. Singletons could
-//       just as well be heap objects since there is only one allocation to pay for.
-//       32-bit might have a somewhat bad time but if you are still on 32-bit you
-//       already have a bad time, anyway.
-
-#[derive(Debug, PartialEq)]
-enum BaseTag {
-    ORef = 0b01,
-    Fixnum = 0b00, // i30 | i62
-    Flonum = 0b10, // f30 | f62
-    Ext = 0b11     // char, bool, '() etc.
-}
+// TODO: Singletons could just as well be heap objects since there is only one
+// allocation to pay for. 32-bit might have a somewhat bad time but if you are
+// still on 32-bit you already have a bad time, anyway.
 
 #[derive(Debug, PartialEq)]
 pub enum Tag {
-    ORef = 0b01,
-    Fixnum = 0b00,
-    Flonum = 0b10,
-    Char = 0b0111, // (28 | 60) bit char
-    Bool = 0b1011,
-    Singleton = 0b0011, // '() etc.
-    FrameTag = 0b1111   // not visible on Scheme side
+    Fixnum = 0, // i29 | i61, 0 => less fiddly arithmetic
+    ORef = 1,   // the 1 should often sink into addressing modes
+    Flonum = 2, // f29 | f61
+    Char = 3,   // (28 | 60) bit char
+    Bool = 4,
+    Nil = 5,     // ()
+    Unbound = 6, // Hash table sentinel
+    Unspecified = 7
 }
 
 pub enum UnpackedValue {
-    ORef(HeapValue<()>),
     Fixnum(isize),
+    ORef(HeapValue<()>),
     Flonum(fsize),
     Char(char),
     Bool(bool),
     Nil,
     Unbound,
-    Unspecified,
-    Eof,
-    FrameTag(FrameTag)
+    Unspecified
 }
 
 // ---
@@ -60,10 +50,10 @@ pub struct Value(usize);
 impl ObjectReference for Value {
     type Object = Object;
 
-    unsafe fn from_ptr(data: *mut u8) -> Self { Self(data as usize | BaseTag::ORef as usize) }
+    unsafe fn from_ptr(data: *mut u8) -> Self { Self(data as usize | Tag::ORef as usize) }
 
     fn as_mut_ptr(self) -> Option<*mut Object> {
-        if self.is_oref() {
+        if self.has_tag(Tag::ORef) {
             Some(unsafe { ((self.0 & !Self::MASK) as *mut Object).offset(-1) })
         } else {
             None
@@ -72,65 +62,38 @@ impl ObjectReference for Value {
 }
 
 impl Value {
-    pub const SHIFT: usize = 2;
+    pub const SHIFT: usize = 3;
     const TAG_COUNT: usize = 1 << Self::SHIFT;
     const MASK: usize = Self::TAG_COUNT - 1;
 
-    const EXT_SHIFT: usize = 4;
-    const EXT_MASK: usize = (1 << Self::EXT_SHIFT) - 1;
-
     pub const ZERO: Self = Self(0 << Self::SHIFT | Tag::Fixnum as usize);
 
-    pub const TRUE: Self = Self(1 << Self::EXT_SHIFT | Tag::Bool as usize);
-    pub const FALSE: Self = Self(0 << Self::EXT_SHIFT | Tag::Bool as usize);
-    pub const NIL: Self = Self(0 << Self::EXT_SHIFT | Tag::Singleton as usize); // '()
-    pub const UNBOUND: Self = Self(1 << Self::EXT_SHIFT | Tag::Singleton as usize); // 'tombstone'
-    pub const UNSPECIFIED: Self = Self(2 << Self::EXT_SHIFT | Tag::Singleton as usize); // for 'unspecified' stuff
-    pub const EOF: Self = Self(3 << Self::EXT_SHIFT | Tag::Singleton as usize); // #!eof
+    pub const TRUE: Self = Self(1 << Self::SHIFT | Tag::Bool as usize);
+    pub const FALSE: Self = Self(0 << Self::SHIFT | Tag::Bool as usize);
 
-    const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 30/62
+    pub const NIL: Self = Self(Tag::Nil as usize); // ()
+    pub const UNBOUND: Self = Self(Tag::Unbound as usize); // 'tombstone'
+    pub const UNSPECIFIED: Self = Self(Tag::Unspecified as usize); // for 'unspecified' stuff
 
-    fn base_tag(self) -> BaseTag { unsafe { transmute((self.0 & Self::MASK) as u8) } }
+    const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 29 | 61
 
-    pub fn tag(self) -> Tag {
-        let base_tag = self.base_tag();
-        if BaseTag::Ext == base_tag {
-            unsafe { transmute((self.0 & Self::EXT_MASK) as u8) }
-        } else {
-            unsafe { transmute(base_tag) }
-        }
-    }
+    pub fn tag(self) -> Tag { unsafe { transmute::<u8, Tag>((self.0 & Self::MASK) as u8) } }
 
-    pub fn immediate_type_index(self) -> u8 {
-        let tag = self.tag();
-        if tag == Tag::Singleton {
-            ((1 << Self::EXT_SHIFT) | (self.0 >> Self::EXT_SHIFT & Self::EXT_MASK)) as u8
-        } else {
-            tag as u8
-        }
-    }
-
-    pub fn is_oref(self) -> bool { self.base_tag() == BaseTag::ORef }
-
-    pub fn is_frame_tag(self) -> bool { self.tag() == Tag::FrameTag }
+    pub fn has_tag(self, tag: Tag) -> bool { self.tag() == tag }
 
     pub fn unpack(self) -> UnpackedValue {
         match self.tag() {
-            Tag::ORef => UnpackedValue::ORef(HeapValue { value: self, _phantom: PhantomData }),
             Tag::Fixnum => UnpackedValue::Fixnum(self.0 as isize >> Self::SHIFT),
-            Tag::Flonum => unimplemented!(),
+            Tag::ORef => UnpackedValue::ORef(HeapValue { value: self, _phantom: PhantomData }),
+            Tag::Flonum =>
+                UnpackedValue::Flonum(unsafe { transmute::<usize, fsize>(self.0 & !Self::MASK) }),
             Tag::Char => UnpackedValue::Char(unsafe {
-                char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32)
+                char::from_u32_unchecked((self.0 >> Self::SHIFT) as u32)
             }),
-            Tag::Bool => UnpackedValue::Bool((self.0 >> Self::EXT_SHIFT) != 0),
-            Tag::Singleton => match self {
-                Self::NIL => UnpackedValue::Nil,
-                Self::UNBOUND => UnpackedValue::Unbound,
-                Self::UNSPECIFIED => UnpackedValue::Unspecified,
-                Self::EOF => UnpackedValue::Eof,
-                _ => unimplemented!()
-            },
-            Tag::FrameTag => UnpackedValue::FrameTag(unsafe { transmute::<Value, FrameTag>(self) })
+            Tag::Bool => UnpackedValue::Bool((self.0 >> Self::SHIFT) != 0),
+            Tag::Nil => UnpackedValue::Nil,
+            Tag::Unbound => UnpackedValue::Unbound,
+            Tag::Unspecified => UnpackedValue::Unspecified
         }
     }
 
@@ -146,11 +109,11 @@ impl Value {
 }
 
 impl From<u16> for Value {
-    fn from(n: u16) -> Self { Self((n as usize) << Self::SHIFT | BaseTag::Fixnum as usize) }
+    fn from(n: u16) -> Self { Self((n as usize) << Self::SHIFT | Tag::Fixnum as usize) }
 }
 
 impl From<i16> for Value {
-    fn from(n: i16) -> Self { Self((n as usize) << Self::SHIFT | BaseTag::Fixnum as usize) }
+    fn from(n: i16) -> Self { Self((n as usize) << Self::SHIFT | Tag::Fixnum as usize) }
 }
 
 impl TryFrom<isize> for Value {
@@ -158,9 +121,9 @@ impl TryFrom<isize> for Value {
 
     fn try_from(n: isize) -> Result<Self, Self::Error> {
         if n >> Self::BOUNDS_SHIFT == 0 || n >> Self::BOUNDS_SHIFT == !0 as isize
-        // fits in 30/62 bits, OPTIMIZE
+        // fits in 29 | 61 bits, OPTIMIZE
         {
-            Ok(Self((n << Self::SHIFT) as usize | BaseTag::Fixnum as usize))
+            Ok(Self((n << Self::SHIFT) as usize | Tag::Fixnum as usize))
         } else {
             Err(RuntimeError::Overflow(BuiltInType::Fixnum))
         }
@@ -171,7 +134,7 @@ impl TryInto<isize> for Value {
     type Error = RuntimeError;
 
     fn try_into(self) -> Result<isize, Self::Error> {
-        if self.base_tag() == BaseTag::Fixnum {
+        if self.has_tag(Tag::Fixnum) {
             Ok(self.0 as isize >> Self::SHIFT)
         } else {
             Err(RuntimeError::Type { value: self, expected: BuiltInType::Fixnum })
@@ -184,8 +147,8 @@ impl TryFrom<usize> for Value {
 
     fn try_from(n: usize) -> Result<Self, Self::Error> {
         if n >> Self::BOUNDS_SHIFT == 0 {
-            // fits in 30/62 bits, OPTIMIZE
-            Ok(Self(n << Self::SHIFT | BaseTag::Fixnum as usize))
+            // fits in 29 | 61 bits, OPTIMIZE
+            Ok(Self(n << Self::SHIFT | Tag::Fixnum as usize))
         } else {
             Err(RuntimeError::Overflow(BuiltInType::Fixnum))
         }
@@ -196,7 +159,7 @@ impl TryInto<usize> for Value {
     type Error = RuntimeError;
 
     fn try_into(self) -> Result<usize, Self::Error> {
-        if self.base_tag() == BaseTag::Fixnum {
+        if self.has_tag(Tag::Fixnum) {
             Ok(self.0 >> Self::SHIFT)
         } else {
             Err(RuntimeError::Type { value: self, expected: BuiltInType::Fixnum })
@@ -209,9 +172,9 @@ impl TryFrom<fsize> for Value {
 
     fn try_from(n: fsize) -> Result<Self, Self::Error> {
         if unimplemented!() {
-            // fits in 30/62 bits
+            // fits in 29 | 61 bits
             Ok(Self(
-                unsafe { mem::transmute::<_, usize>(n) } << Self::SHIFT | BaseTag::Flonum as usize
+                (unsafe { mem::transmute::<fsize, usize>(n) } & !Self::MASK) | Tag::Flonum as usize
             ))
         } else {
             Err(RuntimeError::Overflow(BuiltInType::Flonum))
@@ -220,15 +183,15 @@ impl TryFrom<fsize> for Value {
 }
 
 impl From<char> for Value {
-    fn from(c: char) -> Self { Self((c as usize) << Self::EXT_SHIFT | Tag::Char as usize) }
+    fn from(c: char) -> Self { Self((c as usize) << Self::SHIFT | Tag::Char as usize) }
 }
 
 impl TryInto<char> for Value {
     type Error = RuntimeError;
 
     fn try_into(self) -> Result<char, Self::Error> {
-        if self.0 & Self::EXT_MASK == Tag::Char as usize {
-            Ok(unsafe { char::from_u32_unchecked((self.0 >> Self::EXT_SHIFT) as u32) })
+        if self.has_tag(Tag::Char) {
+            Ok(unsafe { char::from_u32_unchecked((self.0 >> Self::SHIFT) as u32) })
         } else {
             Err(RuntimeError::Type { value: self, expected: BuiltInType::Char })
         }
@@ -236,15 +199,15 @@ impl TryInto<char> for Value {
 }
 
 impl From<bool> for Value {
-    fn from(b: bool) -> Self { Self((b as usize) << Self::EXT_SHIFT | Tag::Bool as usize) }
+    fn from(b: bool) -> Self { Self((b as usize) << Self::SHIFT | Tag::Bool as usize) }
 }
 
 impl TryInto<bool> for Value {
     type Error = RuntimeError;
 
     fn try_into(self) -> Result<bool, Self::Error> {
-        if self.0 & Self::EXT_MASK == Tag::Bool as usize {
-            Ok(self.0 >> Self::EXT_SHIFT != 0)
+        if self.has_tag(Tag::Bool) {
+            Ok(self.0 >> Self::SHIFT != 0)
         } else {
             Err(RuntimeError::Type { value: self, expected: BuiltInType::Char })
         }
@@ -262,14 +225,13 @@ impl Display for Value {
         match self.unpack() {
             ORef(v) => Display::fmt(&v, f),
             Fixnum(n) => Display::fmt(&n, f), // HACK
-            Flonum(n) => unimplemented!(),
+            Flonum(n) => Display::fmt(&n, f), // HACK
             Char(c) => Display::fmt(&c, f), // HACK
             Bool(true) => Display::fmt("#true", f),
             Bool(false) => Display::fmt("#false", f),
             Nil => Display::fmt("()", f),
             Unbound => Display::fmt("#<unbound>", f), // although we should never actually get here
-            Unspecified => Display::fmt("#<unspecified>", f),
-            _ => unimplemented!()
+            Unspecified => Display::fmt("#<unspecified>", f)
         }
     }
 }
@@ -279,14 +241,14 @@ impl Display for Value {
 #[derive(Debug, Clone, Copy)]
 #[repr(usize)]
 pub enum FrameTag {
-    Done = 0 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    CondBranch = 1 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    Define = 2 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    Set = 3 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    Let = 4 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    Arg = 5 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    Stmt = 6 << Value::EXT_SHIFT | Tag::FrameTag as usize,
-    CallWithValues = 7 << Value::EXT_SHIFT | Tag::FrameTag as usize
+    Done = 0 << Value::SHIFT | Tag::Fixnum as usize,
+    CondBranch = 1 << Value::SHIFT | Tag::Fixnum as usize,
+    Define = 2 << Value::SHIFT | Tag::Fixnum as usize,
+    Set = 3 << Value::SHIFT | Tag::Fixnum as usize,
+    Let = 4 << Value::SHIFT | Tag::Fixnum as usize,
+    Arg = 5 << Value::SHIFT | Tag::Fixnum as usize,
+    Stmt = 6 << Value::SHIFT | Tag::Fixnum as usize,
+    CallWithValues = 7 << Value::SHIFT | Tag::Fixnum as usize
 }
 
 impl FrameTag {
@@ -420,7 +382,7 @@ impl TryFrom<Value> for HeapValue<()> {
     type Error = (); // FIXME
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if value.base_tag() == BaseTag::ORef {
+        if value.has_tag(Tag::ORef) {
             Ok(Self { value, _phantom: PhantomData })
         } else {
             Err(())
@@ -464,7 +426,7 @@ mod tests {
 
         let v = Value::from(c);
 
-        assert!(!v.is_oref());
+        assert!(!v.has_tag(Tag::ORef));
         assert_eq!(c, v.try_into().unwrap());
     }
 
@@ -474,7 +436,7 @@ mod tests {
 
         let v = Value::from(b);
 
-        assert!(!v.is_oref());
+        assert!(!v.has_tag(Tag::ORef));
         assert_eq!(b, v.try_into().unwrap());
     }
 
@@ -484,14 +446,14 @@ mod tests {
 
         let v = Value::from(23i16);
 
-        assert!(!v.is_oref());
+        assert!(!v.has_tag(Tag::ORef));
         assert_eq!(n, v.try_into().unwrap());
 
         let m = -n;
 
         let u = Value::try_from(m).unwrap();
 
-        assert!(!u.is_oref());
+        assert!(!u.has_tag(Tag::ORef));
         assert_eq!(m, u.try_into().unwrap());
     }
 }

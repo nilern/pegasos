@@ -171,7 +171,7 @@ primitive! { symbol_hash state (v: Symbol) {
 }}
 
 primitive! { immediate_tag state (v: Value) {
-    state.push(v.immediate_type_index() as u16);
+    state.push(v.tag() as u16);
     state.push(1u16);
     Ok(Op::Continue)
 }}
