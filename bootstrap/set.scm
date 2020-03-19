@@ -149,3 +149,20 @@
                              (%hash-set (%hash-set-equality set) (%hash-set-hash set) trie (fx- (set-size set) 1))
                              (%hash-set (%hash-set-equality set) (%hash-set-hash set) %empty-trie 0))))))) ; 'gone
 
+(define set<=?
+  (lambda (set1 set2)
+    (set-every? (lambda (elem) (set-member set2 elem #f)) set1)))
+
+(define %hash-set-trie-every
+  (lambda (pred trie)
+    (if (%bitmap-node? trie)
+      (vector-every (lambda (node) (%hash-set-trie-every pred node))
+                    (%bitmap-node-nodes trie))
+      (if (%collision-node? trie)
+        (vector-every pred (%collision-node-vals trie))
+        (pred trie)))))
+
+(define set-every?
+  (lambda (pred set)
+    (if (%hash-set-trie-every pred (%hash-set-trie set)) #t #f)))
+

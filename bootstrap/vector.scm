@@ -42,3 +42,17 @@
                        vec*)))
         (loop 0)))))
 
+(define vector-every
+  (lambda (pred vec)
+    (let* ((len (vector-length vec))
+           (loop #f))
+      (begin
+        (set! loop (lambda (i res)
+                     (if (fx<? i len)
+                       (let* ((v (pred (vector-ref vec i))))
+                         (if v
+                           (loop (fx+ i 1) v)
+                           #f))
+                       res)))
+        (loop 0 #t)))))
+

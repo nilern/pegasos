@@ -118,3 +118,17 @@
                             (vector-set! (%hash-table-keys hash-table) i k)
                             (vector-set! (%hash-table-values hash-table) i v)))))))
 
+(define hash-table-fold
+  (lambda (f acc table)
+    (let* ((capacity (%hash-table-capacity table))
+           (loop #f))
+      (begin
+        (set! loop (lambda (i acc)
+                     (if (fx<? i capacity)
+                       (let* ((k (vector-ref (%hash-table-keys table) i)))
+                         (if (eq? k %hash-table-vacant)
+                           (loop (fx+ i 1) acc)
+                           (loop (fx+ i 1) (f k (vector-ref (%hash-table-values table) i) acc))))
+                       acc)))
+        (loop 0 acc)))))
+
