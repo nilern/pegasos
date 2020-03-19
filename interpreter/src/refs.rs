@@ -15,6 +15,11 @@ use super::util::fsize;
 
 // ---
 
+// TODO: Simplify tagging so that we uniformly use 3-bit tags. Singletons could
+//       just as well be heap objects since there is only one allocation to pay for.
+//       32-bit might have a somewhat bad time but if you are still on 32-bit you
+//       already have a bad time, anyway.
+
 #[derive(Debug, PartialEq)]
 enum BaseTag {
     ORef = 0b01,
