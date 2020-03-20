@@ -34,20 +34,6 @@ impl HeapTag {
     const FIRST_REFS: usize = Self::Pair as usize;
 
     fn is_bytes(self) -> bool { (self as usize) < Self::FIRST_REFS }
-
-    fn skips(self) -> bool { self == Self::Closure }
-
-    fn align(self) -> usize {
-        if self.is_bytes() {
-            if self == Self::Symbol {
-                align_of::<SymbolData>()
-            } else {
-                align_of::<u8>()
-            }
-        } else {
-            align_of::<Value>()
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -149,14 +135,13 @@ impl Header {
 
     const MARK_BIT: usize = 0b10;
     const BYTES_BIT: usize = 0b100;
-    const SKIP_BIT: usize = 0b1000;
 
     pub fn new(type_tag: HeapTag, len: usize) -> Self {
         // FIXME: Check that `len` fits in 24 / 56 bits
         Self(
             len << Self::SIZE_SHIFT
                 | (type_tag as usize) << Self::TYPE_SHIFT
-                | (type_tag.skips() as usize) << 3
+                // Bit 2 is unused ATM
                 | (type_tag.is_bytes() as usize) << 2
                 | 0b01 // always set for `is_alignment_hole`
         )
@@ -179,17 +164,7 @@ impl Header {
         unsafe { transmute((self.0 >> Self::TYPE_SHIFT & Self::TYPE_MASK) as u8) }
     }
 
-    fn align(&self) -> usize {
-        if self.is_bytes() {
-            self.tag().align()
-        } else {
-            align_of::<Value>()
-        }
-    }
-
     fn is_bytes(&self) -> bool { self.0 & Self::BYTES_BIT == Self::BYTES_BIT }
-
-    fn skips(&self) -> bool { self.0 & Self::SKIP_BIT == Self::SKIP_BIT }
 
     fn mark(&mut self) { *self = Self(self.0 | Self::MARK_BIT); }
 
@@ -215,8 +190,6 @@ impl Object {
     pub fn tag(&self) -> HeapTag { self.header.tag() }
 
     pub fn is_bytes(&self) -> bool { self.header.is_bytes() }
-
-    pub fn skips(&self) -> bool { self.header.skips() }
 
     pub fn len(&self) -> usize { self.header.len() }
 
@@ -259,7 +232,7 @@ impl HeapObject for Object {
     }
 
     fn size(&self) -> usize { self.header.size() }
-    fn align(&self) -> usize { self.header.align() }
+    fn align(&self) -> usize { align_of::<Value>() }
 
     fn data(&mut self) -> *mut u8 { (unsafe { (self as *mut Self).offset(1) }) as *mut u8 }
     fn ptr_fields(&mut self) -> Self::Fields { PtrFields::new(self) }
@@ -274,21 +247,7 @@ pub struct PtrFields {
 impl PtrFields {
     fn new(obj: *mut Object) -> Self {
         let obj = unsafe { &mut *obj };
-        // OPTIMIZE:
-        Self {
-            ptr: if obj.skips() {
-                unsafe { (obj.data() as *mut Value).add(1) }
-            } else {
-                obj.data() as *mut Value
-            },
-            len: if obj.is_bytes() {
-                0
-            } else if obj.skips() {
-                obj.len() - 1
-            } else {
-                obj.len()
-            }
-        }
+        Self { ptr: obj.data() as *mut Value, len: if obj.is_bytes() { 0 } else { obj.len() } }
     }
 }
 

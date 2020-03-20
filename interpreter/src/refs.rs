@@ -376,20 +376,9 @@ impl<T: ?Sized> HeapValue<T> {
     pub fn slots<'a>(&'a self) -> &'a [Value] {
         unsafe {
             let obj = &mut *self.as_ptr();
-            // OPTIMIZE:
             slice::from_raw_parts(
-                if obj.skips() {
-                    (obj.data() as *mut Value).add(1)
-                } else {
-                    obj.data() as *mut Value
-                },
-                if obj.is_bytes() {
-                    0
-                } else if obj.skips() {
-                    obj.len() - 1
-                } else {
-                    obj.len()
-                }
+                obj.data() as *mut Value,
+                if obj.is_bytes() { 0 } else { obj.len() }
             )
         }
     }
@@ -397,20 +386,9 @@ impl<T: ?Sized> HeapValue<T> {
     pub fn slots_mut<'a>(&'a mut self) -> &'a mut [Value] {
         unsafe {
             let obj = &mut *self.as_ptr();
-            // OPTIMIZE:
             slice::from_raw_parts_mut(
-                if obj.skips() {
-                    (obj.data() as *mut Value).add(1)
-                } else {
-                    obj.data() as *mut Value
-                },
-                if obj.is_bytes() {
-                    0
-                } else if obj.skips() {
-                    obj.len() - 1
-                } else {
-                    obj.len()
-                }
+                obj.data() as *mut Value,
+                if obj.is_bytes() { 0 } else { obj.len() }
             )
         }
     }
