@@ -277,6 +277,7 @@ impl State {
             .collection()
             .roots(self.stack.iter_mut().map(|v| v as *mut Value))
             .roots(iter::once(transmute::<&mut Bindings, *mut Value>(&mut self.env)))
+            .roots(self.immediate_types.iter_mut().map(|v| v as *mut Value))
             .traverse()
             .weaks(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)));
     }
