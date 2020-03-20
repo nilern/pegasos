@@ -13,6 +13,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager, ObjectReference};
+use super::interpreter::Primitive;
 use super::refs::{HeapValue, UnpackedValue, Value};
 use super::state::State;
 
@@ -72,26 +73,6 @@ pub enum BuiltInType {
 impl Display for BuiltInType {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", format!("{:?}", self).to_lowercase())
-    }
-}
-
-// ---
-
-#[repr(usize)]
-pub enum Code {
-    ApplySelf = 0
-}
-
-impl TryFrom<usize> for Code {
-    type Error = ();
-
-    fn try_from(code: usize) -> Result<Self, Self::Error> {
-        if code < 256 {
-            // HACK
-            Ok(unsafe { transmute::<usize, Self>(code) })
-        } else {
-            Err(())
-        }
     }
 }
 
@@ -613,7 +594,7 @@ impl Iterator for Cars {
 
 #[repr(C)]
 pub struct ClosureData {
-    pub code: usize
+    pub code: Primitive
 }
 
 impl Heaped for ClosureData {
@@ -624,7 +605,7 @@ impl Heaped for ClosureData {
 pub type Closure = HeapValue<ClosureData>;
 
 impl Closure {
-    pub fn new(state: &mut State, code: usize, clover_count: usize) -> Option<Self> {
+    pub fn new(state: &mut State, code: Primitive, clover_count: usize) -> Option<Self> {
         let len = clover_count + 1;
         state.alloc::<ClosureData>(Object::new(Header::new(HeapTag::Closure, len))).map(
             |mut res| {

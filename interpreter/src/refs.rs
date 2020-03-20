@@ -226,7 +226,7 @@ impl Display for Value {
             ORef(v) => Display::fmt(&v, f),
             Fixnum(n) => Display::fmt(&n, f), // HACK
             Flonum(n) => Display::fmt(&n, f), // HACK
-            Char(c) => Display::fmt(&c, f), // HACK
+            Char(c) => Display::fmt(&c, f),   // HACK
             Bool(true) => Display::fmt("#true", f),
             Bool(false) => Display::fmt("#false", f),
             Nil => Display::fmt("()", f),

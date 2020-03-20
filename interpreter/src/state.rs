@@ -148,7 +148,7 @@ impl State {
         self.push(vec)
     }
 
-    pub unsafe fn closure(&mut self, code: usize, len: usize) {
+    pub unsafe fn closure(&mut self, code: Primitive, len: usize) {
         debug_assert!(self.stack.len() >= len);
 
         let mut f = Closure::new(self, code, len).unwrap_or_else(|| {
@@ -161,7 +161,6 @@ impl State {
     }
 
     pub unsafe fn push_primitive(&mut self, code: Primitive) {
-        let code = code as usize;
         let f = Closure::new(self, code, 0).unwrap_or_else(|| {
             self.collect_garbage();
             Closure::new(self, code, 0).unwrap()
