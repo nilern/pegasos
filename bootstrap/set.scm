@@ -46,7 +46,7 @@
     (%hash-set (comparator-equality-predicate comparator) (comparator-hash-function comparator)
                %empty-trie 0)))
 
-(define set-eq (lambda () (%hash-set eq? %identity-hash %empty-trie 0)))
+(define set-eq (lambda () (%hash-set eq? ##identity-hash %empty-trie 0)))
 
 (define %hash-set-trie-member
   (lambda (equality trie element default hash shift)

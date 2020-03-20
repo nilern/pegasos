@@ -3,41 +3,46 @@ use std::mem::transmute;
 use std::ptr;
 
 use super::error::PgsError;
-use super::interpreter::{Op, Primitive, RuntimeError};
+use super::interpreter::{Op, RuntimeError};
 use super::objects::{Cars, Closure, Pair, Symbol, Syntax, Vector};
-use super::refs::{FrameTag, HeapValue, Tag, Value};
+use super::refs::{FrameTag, HeapValue, Primop, Tag, Value};
 use super::state::State;
 
-pub const PRIMITIVES: [(&str, Primitive); 28] = [
-    ("void", void),
-    ("eq?", eq),
-    ("%identity-hash", identity_hash),
-    ("apply", apply),
-    ("call-with-values", call_with_values),
-    ("values", values),
-    ("%symbol-hash", symbol_hash),
-    ("%immediate-type-index", immediate_tag),
-    ("%heap-type-index", heap_tag),
-    ("%length", object_length),
-    ("%slot-ref", slot_ref),
-    ("%slot-set!", slot_set),
-    ("%record", record),
-    ("cons", cons),
-    ("car", car),
-    ("cdr", cdr),
-    ("make-vector", make_vector),
-    ("vector-copy!", vector_copy),
-    ("fx<?", fx_lt),
-    ("fx+", fx_add),
-    ("fx-", fx_sub),
-    ("fx*", fx_mul),
-    ("bitwise-and", bitwise_and),
-    ("bitwise-ior", bitwise_ior),
-    ("bitwise-xor", bitwise_xor),
-    ("arithmetic-shift", arithmetic_shift),
-    ("bit-count", bit_count),
-    ("make-syntax", make_syntax)
-];
+pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
+    use Primop::*;
+
+    match op {
+        Void => void(state),
+        Eq => eq(state),
+        IdentityHash => identity_hash(state),
+        Call => call(state),
+        Apply => apply(state),
+        CallWithValues => call_with_values(state),
+        Values => values(state),
+        SymbolHash => symbol_hash(state),
+        ImmediateTypeIndex => immediate_tag(state),
+        HeapTypeIndex => heap_tag(state),
+        Length => object_length(state),
+        SlotRef => slot_ref(state),
+        SlotSet => slot_set(state),
+        Record => record(state),
+        Cons => cons(state),
+        Car => car(state),
+        Cdr => cdr(state),
+        MakeVector => make_vector(state),
+        VectorCopy => vector_copy(state),
+        FxLt => fx_lt(state),
+        FxAdd => fx_add(state),
+        FxSub => fx_sub(state),
+        FxMul => fx_mul(state),
+        BitwiseAnd => bitwise_and(state),
+        BitwiseIor => bitwise_ior(state),
+        BitwiseXor => bitwise_xor(state),
+        ArithmeticShift => arithmetic_shift(state),
+        BitCount => bit_count(state),
+        MakeSyntax => make_syntax(state)
+    }
+}
 
 macro_rules! count {
     () => (0);
@@ -107,6 +112,62 @@ primitive! { identity_hash state (v: Value) {
     state.push(1u16);
     Ok(Op::Continue)
 }}
+
+fn call(state: &mut State) -> Result<Op, PgsError> {
+    let arg_count: usize = state.pop().unwrap().try_into().unwrap();
+    let callee: Closure = unsafe { transmute::<Value, Closure>(state.get(arg_count).unwrap()) };
+
+    match callee.clovers() {
+        &[env, body, rest_param, params] => {
+            let params: Vector = params.try_into().unwrap();
+            let fixed_argc = params.len();
+            let variadic = rest_param != Value::NIL;
+
+            // OPTIMIZE?
+            if arg_count == fixed_argc || variadic && arg_count >= fixed_argc {
+                // FIXME: It is an error for a <variable> to appear more than
+                // once
+                let leftover_argc = arg_count - fixed_argc;
+
+                state.remove(arg_count); // callee
+                state.insert_after(arg_count, body);
+                state.insert_after(arg_count, params.into());
+                state.insert_after(arg_count, rest_param);
+
+                state.set_env(env.try_into().unwrap());
+                unsafe { state.push_scope() };
+
+                if variadic {
+                    state.push(Value::NIL);
+                    for _ in 0..leftover_argc {
+                        unsafe { state.cons() };
+                    }
+                    let rest_param = state.get(fixed_argc + 1).unwrap();
+                    state.insert_after(1, rest_param);
+                    unsafe { state.define() };
+                }
+
+                for ri in 0..fixed_argc {
+                    let i = fixed_argc - 1 - ri;
+                    let params = unsafe { transmute::<Value, Vector>(state.get(i + 2).unwrap()) };
+                    state.insert_after(1, params[i]);
+                    unsafe { state.define() };
+                }
+
+                state.pop(); // rest_param
+                state.pop(); // params
+                Ok(Op::Eval)
+            } else {
+                state.raise(RuntimeError::Argc {
+                    callee: callee.into(),
+                    params: (fixed_argc, variadic),
+                    got: arg_count
+                })
+            }
+        },
+        _ => unreachable!()
+    }
+}
 
 fn apply(state: &mut State) -> Result<Op, PgsError> {
     let argc: usize = state.pop().unwrap().try_into().unwrap();

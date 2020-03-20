@@ -6,11 +6,10 @@ use std::mem::transmute;
 
 use super::error::PgsError;
 use super::lexer::Lexer;
-use super::objects::{
-    BuiltInType, Closure, Pair, PgsString, Symbol, Syntax, UnpackedHeapValue, Vector
-};
+use super::objects::{BuiltInType, Closure, Pair, PgsString, Symbol, Syntax, UnpackedHeapValue};
 use super::parser::Parser;
-use super::refs::{FrameTag, UnpackedValue, Value};
+use super::primitives;
+use super::refs::{FrameTag, Primop, UnpackedValue, Value};
 use super::state::State;
 
 #[derive(Debug)]
@@ -74,8 +73,6 @@ pub enum Op {
     Apply,
     Stop
 }
-
-pub type Primitive = fn(&mut State) -> Result<Op, PgsError>;
 
 pub fn run(state: &mut State) -> Result<(), PgsError> {
     let mut op = Op::Eval;
@@ -319,7 +316,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
 
                                                 unsafe {
                                                     state.vector(arity);
-                                                    state.closure(call, 4);
+                                                    state.closure(Primop::Call, 4);
                                                 }
                                                 state.push(1u16);
                                                 return Ok(Op::Continue);
@@ -623,65 +620,9 @@ fn apply(state: &mut State) -> Result<Op, PgsError> {
     let arg_count: usize = state.peek().unwrap().try_into().unwrap();
 
     if let Ok(callee) = Closure::try_from(state.get(arg_count + 1).unwrap()) {
-        (callee.code)(state)
+        primitives::perform(callee.code, state)
     } else {
         state.raise(RuntimeError::Uncallable(state.get(arg_count + 1).unwrap()))
-    }
-}
-
-fn call(state: &mut State) -> Result<Op, PgsError> {
-    let arg_count: usize = state.pop().unwrap().try_into().unwrap();
-    let callee: Closure = unsafe { transmute::<Value, Closure>(state.get(arg_count).unwrap()) };
-
-    match callee.clovers() {
-        &[env, body, rest_param, params] => {
-            let params: Vector = params.try_into().unwrap();
-            let fixed_argc = params.len();
-            let variadic = rest_param != Value::NIL;
-
-            // OPTIMIZE?
-            if arg_count == fixed_argc || variadic && arg_count >= fixed_argc {
-                // FIXME: It is an error for a <variable> to appear more than
-                // once
-                let leftover_argc = arg_count - fixed_argc;
-
-                state.remove(arg_count); // callee
-                state.insert_after(arg_count, body);
-                state.insert_after(arg_count, params.into());
-                state.insert_after(arg_count, rest_param);
-
-                state.set_env(env.try_into().unwrap());
-                unsafe { state.push_scope() };
-
-                if variadic {
-                    state.push(Value::NIL);
-                    for _ in 0..leftover_argc {
-                        unsafe { state.cons() };
-                    }
-                    let rest_param = state.get(fixed_argc + 1).unwrap();
-                    state.insert_after(1, rest_param);
-                    unsafe { state.define() };
-                }
-
-                for ri in 0..fixed_argc {
-                    let i = fixed_argc - 1 - ri;
-                    let params = unsafe { transmute::<Value, Vector>(state.get(i + 2).unwrap()) };
-                    state.insert_after(1, params[i]);
-                    unsafe { state.define() };
-                }
-
-                state.pop(); // rest_param
-                state.pop(); // params
-                Ok(Op::Eval)
-            } else {
-                state.raise(RuntimeError::Argc {
-                    callee: callee.into(),
-                    params: (fixed_argc, variadic),
-                    got: arg_count
-                })
-            }
-        },
-        _ => unreachable!()
     }
 }
 

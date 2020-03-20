@@ -179,9 +179,12 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         }
     }
 
-    unsafe fn identifier(&mut self, state: &mut State) -> Result<(Pos, Token), Error> {
+    unsafe fn identifier(
+        &mut self, state: &mut State, prefix: &str
+    ) -> Result<(Pos, Token), Error> {
         let (pos, initial) = self.chars.next().unwrap(); // already checked that `is_initial`
         self.buf.clear();
+        self.buf.push_str(prefix);
         self.buf.push(initial);
 
         loop {
@@ -288,10 +291,14 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                             let _ = self.chars.next().unwrap();
                             break Some(Ok((pos, OpenVector)));
                         },
+                        Some('#') => {
+                            let _ = self.chars.next().unwrap();
+                            break Some(self.identifier(state, "##"));
+                        },
                         _ => unimplemented!()
                     }
                 },
-                Some(c) if is_initial(c) => break Some(self.identifier(state)),
+                Some(c) if is_initial(c) => break Some(self.identifier(state, "")),
                 Some(c) if c.is_digit(10) || c == '+' || c == '-' =>
                     break Some(self.number(Radix::Decimal)),
                 Some(c) => unimplemented!("{:?}", c),

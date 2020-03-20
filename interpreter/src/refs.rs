@@ -8,6 +8,8 @@ use std::mem::{self, size_of, transmute};
 use std::ops::{Deref, DerefMut};
 use std::slice;
 
+use strum_macros::EnumIter;
+
 use super::gc::{HeapObject, ObjectReference};
 use super::interpreter::RuntimeError;
 use super::objects::{BuiltInType, HeapTag, Heaped, Object, UnpackedHeapValue};
@@ -232,6 +234,81 @@ impl Display for Value {
             Nil => Display::fmt("()", f),
             Unbound => Display::fmt("#<unbound>", f), // although we should never actually get here
             Unspecified => Display::fmt("#<unspecified>", f)
+        }
+    }
+}
+
+// ---
+
+#[derive(Debug, Clone, Copy, EnumIter)]
+#[repr(usize)]
+pub enum Primop {
+    Void = 0 << Value::SHIFT | Tag::Fixnum as usize,
+    Eq = 1 << Value::SHIFT | Tag::Fixnum as usize,
+    IdentityHash = 2 << Value::SHIFT | Tag::Fixnum as usize,
+    Call = 3 << Value::SHIFT | Tag::Fixnum as usize,
+    Apply = 4 << Value::SHIFT | Tag::Fixnum as usize,
+    CallWithValues = 5 << Value::SHIFT | Tag::Fixnum as usize,
+    Values = 6 << Value::SHIFT | Tag::Fixnum as usize,
+    SymbolHash = 7 << Value::SHIFT | Tag::Fixnum as usize,
+    ImmediateTypeIndex = 8 << Value::SHIFT | Tag::Fixnum as usize,
+    HeapTypeIndex = 9 << Value::SHIFT | Tag::Fixnum as usize,
+    Length = 10 << Value::SHIFT | Tag::Fixnum as usize,
+    SlotRef = 11 << Value::SHIFT | Tag::Fixnum as usize,
+    SlotSet = 12 << Value::SHIFT | Tag::Fixnum as usize,
+    Record = 13 << Value::SHIFT | Tag::Fixnum as usize,
+    Cons = 14 << Value::SHIFT | Tag::Fixnum as usize,
+    Car = 15 << Value::SHIFT | Tag::Fixnum as usize,
+    Cdr = 16 << Value::SHIFT | Tag::Fixnum as usize,
+    MakeVector = 17 << Value::SHIFT | Tag::Fixnum as usize,
+    VectorCopy = 18 << Value::SHIFT | Tag::Fixnum as usize,
+    FxLt = 19 << Value::SHIFT | Tag::Fixnum as usize,
+    FxAdd = 20 << Value::SHIFT | Tag::Fixnum as usize,
+    FxSub = 21 << Value::SHIFT | Tag::Fixnum as usize,
+    FxMul = 22 << Value::SHIFT | Tag::Fixnum as usize,
+    BitwiseAnd = 23 << Value::SHIFT | Tag::Fixnum as usize,
+    BitwiseIor = 24 << Value::SHIFT | Tag::Fixnum as usize,
+    BitwiseXor = 25 << Value::SHIFT | Tag::Fixnum as usize,
+    ArithmeticShift = 26 << Value::SHIFT | Tag::Fixnum as usize,
+    BitCount = 27 << Value::SHIFT | Tag::Fixnum as usize,
+    MakeSyntax = 28 << Value::SHIFT | Tag::Fixnum as usize
+}
+
+impl Display for Primop {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use Primop::*;
+
+        write!(f, "##")?;
+        match *self {
+            Void => write!(f, "void"),
+            Eq => write!(f, "eq?"),
+            IdentityHash => write!(f, "identity-hash"),
+            Call => write!(f, "call"),
+            Apply => write!(f, "apply"),
+            CallWithValues => write!(f, "call-with-values"),
+            Values => write!(f, "values"),
+            SymbolHash => write!(f, "symbol-hash"),
+            ImmediateTypeIndex => write!(f, "immediate-tag"),
+            HeapTypeIndex => write!(f, "heap-tag"),
+            Length => write!(f, "object-length"),
+            SlotRef => write!(f, "slot-ref"),
+            SlotSet => write!(f, "slot-set!"),
+            Record => write!(f, "record"),
+            Cons => write!(f, "cons"),
+            Car => write!(f, "car"),
+            Cdr => write!(f, "cdr"),
+            MakeVector => write!(f, "make-vector"),
+            VectorCopy => write!(f, "vector-copy!"),
+            FxLt => write!(f, "fx<?"),
+            FxAdd => write!(f, "fx+"),
+            FxSub => write!(f, "fx-"),
+            FxMul => write!(f, "fx*"),
+            BitwiseAnd => write!(f, "bitwise-and"),
+            BitwiseIor => write!(f, "bitwise-ior"),
+            BitwiseXor => write!(f, "bitwise-xor"),
+            ArithmeticShift => write!(f, "arithmetic-shift"),
+            BitCount => write!(f, "bit-count"),
+            MakeSyntax => write!(f, "make-syntax")
         }
     }
 }

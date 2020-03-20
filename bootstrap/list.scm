@@ -1,5 +1,9 @@
 (define null? (lambda (v) (eq? v '())))
 
+(define cons ##cons)
+(define car ##car)
+(define cdr ##cdr)
+
 (define list (lambda xs xs))
 
 (define cadr (lambda (ls) (car (cdr ls))))

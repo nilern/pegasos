@@ -6,7 +6,7 @@
 
 (define make-comparator (rtd-constructor <comparator>))
 
-(define symbol-hash %symbol-hash)
+(define symbol-hash ##symbol-hash)
 
 (define comparator-type-test-predicate (rtd-accessor <comparator> 'type-test))
 (define comparator-equality-predicate (rtd-accessor <comparator> 'equality))

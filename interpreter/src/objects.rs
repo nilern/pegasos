@@ -13,8 +13,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager, ObjectReference};
-use super::interpreter::Primitive;
-use super::refs::{HeapValue, UnpackedValue, Value};
+use super::refs::{HeapValue, Primop, UnpackedValue, Value};
 use super::state::State;
 
 // ---
@@ -594,7 +593,7 @@ impl Iterator for Cars {
 
 #[repr(C)]
 pub struct ClosureData {
-    pub code: Primitive
+    pub code: Primop
 }
 
 impl Heaped for ClosureData {
@@ -605,7 +604,7 @@ impl Heaped for ClosureData {
 pub type Closure = HeapValue<ClosureData>;
 
 impl Closure {
-    pub fn new(state: &mut State, code: Primitive, clover_count: usize) -> Option<Self> {
+    pub fn new(state: &mut State, code: Primop, clover_count: usize) -> Option<Self> {
         let len = clover_count + 1;
         state.alloc::<ClosureData>(Object::new(Header::new(HeapTag::Closure, len))).map(
             |mut res| {

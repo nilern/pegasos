@@ -5,15 +5,16 @@ use std::iter;
 use std::mem::{size_of, transmute};
 use std::path::{Path, PathBuf};
 
+use strum::IntoEnumIterator;
+
 use super::error::PgsError;
 use super::gc::MemoryManager;
-use super::interpreter::{Primitive, RuntimeError};
+use super::interpreter::RuntimeError;
 use super::objects::{
     Bindings, Cars, Closure, Object, Pair, PgsString, Record, Symbol, SymbolTable, Syntax, Vector
 };
 use super::parser::Loc;
-use super::primitives::PRIMITIVES;
-use super::refs::{FrameTag, HeapValue, Value};
+use super::refs::{FrameTag, HeapValue, Primop, Value};
 
 pub struct State {
     heap: MemoryManager<Object>,
@@ -46,9 +47,9 @@ impl State {
             }
             res.define();
 
-            for (name, code) in PRIMITIVES.iter() {
-                res.push_symbol(name);
-                res.push_primitive(*code);
+            for op in Primop::iter() {
+                res.push_symbol(&format!("{}", op));
+                res.push_primitive(op);
                 res.define();
             }
         }
@@ -148,7 +149,7 @@ impl State {
         self.push(vec)
     }
 
-    pub unsafe fn closure(&mut self, code: Primitive, len: usize) {
+    pub unsafe fn closure(&mut self, code: Primop, len: usize) {
         debug_assert!(self.stack.len() >= len);
 
         let mut f = Closure::new(self, code, len).unwrap_or_else(|| {
@@ -160,7 +161,7 @@ impl State {
         self.stack.push(f.into())
     }
 
-    pub unsafe fn push_primitive(&mut self, code: Primitive) {
+    pub unsafe fn push_primitive(&mut self, code: Primop) {
         let f = Closure::new(self, code, 0).unwrap_or_else(|| {
             self.collect_garbage();
             Closure::new(self, code, 0).unwrap()

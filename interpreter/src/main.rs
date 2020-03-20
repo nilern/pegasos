@@ -1,4 +1,6 @@
 extern crate rustyline;
+extern crate strum;
+extern crate strum_macros;
 
 use rustyline::error::ReadlineError;
 use std::fs;

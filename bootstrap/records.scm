@@ -10,21 +10,21 @@
                                    (list 'mutable fieldspec)
                                    fieldspec))
                                 fieldspecs)))
-       (%record <record-type> parent fields name))))
+       (##record <record-type> parent fields name))))
 
 (set! <record-type>
   (make-rtd '<record-type>
     #((immutable parent)
       (immutable fields)
       (immutable name))))
-(%slot-set! <record-type> 0 <record-type>)
+(##slot-set! <record-type> 0 <record-type>)
 
 (define rtd-constructor
   (lambda (rtd)
-    (let* ((arity (vector-length (%slot-ref rtd 2))))
-      (lambda fieldvs
+    (let* ((arity (vector-length (##slot-ref rtd 2))))
+      (lambda fieldvs ; OPTIMIZE
         (if (eq? (length fieldvs) arity)
-          (apply %record rtd fieldvs)
+          (apply ##record rtd fieldvs)
           #f)))))
 
 (define rtd-predicate
@@ -34,7 +34,7 @@
 
 (define rtd-field-index
   (lambda (rtd field-name)
-    (let* ((fieldspecs (%slot-ref rtd 2))
+    (let* ((fieldspecs (##slot-ref rtd 2))
            (len (vector-length fieldspecs))
            (loop #f))
       (begin
@@ -49,17 +49,23 @@
 
 (define rtd-accessor
   (lambda (rtd field-name)
-    (let* ((i (fx+ (car (rtd-field-index rtd field-name)) 1)))
+    (let* ((predicate? (rtd-predicate rtd))
+           (i (fx+ (car (rtd-field-index rtd field-name)) 1)))
       (lambda (record)
-        (%slot-ref record i)))))
+        (if (predicate? record)
+          (##slot-ref record i)
+          (error "record field accessor: type error"))))))
 
 (define rtd-mutator
   (lambda (rtd field-name)
-    (let* ((index-spec (rtd-field-index rtd field-name))
+    (let* ((predicate? (rtd-predicate rtd))
+           (index-spec (rtd-field-index rtd field-name))
            (spec (cdr index-spec)))
       (if (eq? (car spec) 'mutable)
         (let* ((i (fx+ (car index-spec) 1)))
           (lambda (record v)
-            (%slot-set! record i v)))
-        #f))))
+            (if (predicate? record)
+              (##slot-set! record i v)
+              (error "record field mutator: type error"))))
+        (error "rtd-mutator: field is immutable")))))
 

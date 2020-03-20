@@ -1,13 +1,14 @@
 ;;;; # Syntax Objects
 
-(define syntax-e (lambda (s) (%slot-ref s 0)))
+(define make-syntax ##make-syntax)
+(define syntax-e (lambda (s) (##slot-ref s 0)))
 (define %syntax-scopes
   (lambda (s)
-    (let* ((scopes (%slot-ref s 1)))
+    (let* ((scopes (##slot-ref s 1)))
       (if scopes scopes (set-eq)))))
-(define syntax-source (lambda (s) (%slot-ref s 2)))
-(define syntax-line (lambda (s) (%slot-ref s 3)))
-(define syntax-column (lambda (s) (%slot-ref s 4)))
+(define syntax-source (lambda (s) (##slot-ref s 2)))
+(define syntax-line (lambda (s) (##slot-ref s 3)))
+(define syntax-column (lambda (s) (##slot-ref s 4)))
 
 (define identifier? syntax?)
 
@@ -56,7 +57,7 @@
 
 ;;;; # Bindings
 
-(define %all-bindings (make-hash-table (make-comparator (lambda () #t) eq? #f %identity-hash)))
+(define %all-bindings (make-hash-table (make-comparator (lambda () #t) eq? #f ##identity-hash)))
 
 (define add-binding! (lambda (id binding) (hash-table-set! %all-bindings id binding)))
 

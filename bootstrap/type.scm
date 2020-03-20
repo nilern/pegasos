@@ -46,21 +46,21 @@
 
 (define type
   (lambda (v)
-    (let* ((i (%immediate-type-index v)))
+    (let* ((i (##immediate-tag v)))
       (if (eq? i 1)
-        (let* ((h (%heap-type-index v)))
+        (let* ((h (##heap-tag v)))
           (if (eq? h 7)
-            (%slot-ref v 0)
+            (##slot-ref v 0)
             (vector-ref builtin-types (fx+ 8 h))))
         (vector-ref builtin-types i)))))
 
 (define type-hash
   (lambda (v)
-    (let* ((i (%immediate-type-index v)))
+    (let* ((i (##immediate-tag v)))
       (if (eq? i 1)
-        (let* ((h (%heap-type-index v)))
+        (let* ((h (##heap-tag v)))
           (if (eq? h 7)
-            (%identity-hash (%slot-ref v 0))
+            (##identity-hash (##slot-ref v 0))
             (fx+ 8 h)))
         i))))
 
