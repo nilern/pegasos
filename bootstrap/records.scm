@@ -1,23 +1,16 @@
-(define <record-type> #f)
-
 (define make-rtd
   (lambda (name fieldspecs . args)
-    (let* ((parent (if (null? args)
-                     #f
-                     (car args)))
-           (fields (vector-map (lambda (fieldspec)
-                                 (if (symbol? fieldspec)
-                                   (list 'mutable fieldspec)
-                                   fieldspec))
-                                fieldspecs)))
-       (##record <record-type> parent fields name))))
-
-(set! <record-type>
-  (make-rtd '<record-type>
-    #((immutable parent)
-      (immutable fields)
-      (immutable name))))
-(##slot-set! <record-type> 0 <record-type>)
+    (if (symbol? name)
+      (let* ((parent (if (null? args)
+                       #f
+                       (car args)))
+             (fields (vector-map (lambda (fieldspec)
+                                   (if (symbol? fieldspec)
+                                     (list 'mutable fieldspec)
+                                     fieldspec))
+                                  fieldspecs)))
+        (##make-type parent name fields))
+      (error "make-rtd: name is not a symbol" name))))
 
 (define rtd-constructor
   (lambda (rtd)

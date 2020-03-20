@@ -271,7 +271,8 @@ pub enum Primop {
     BitwiseXor = 25 << Value::SHIFT | Tag::Fixnum as usize,
     ArithmeticShift = 26 << Value::SHIFT | Tag::Fixnum as usize,
     BitCount = 27 << Value::SHIFT | Tag::Fixnum as usize,
-    MakeSyntax = 28 << Value::SHIFT | Tag::Fixnum as usize
+    MakeSyntax = 28 << Value::SHIFT | Tag::Fixnum as usize,
+    MakeType = 29 << Value::SHIFT | Tag::Fixnum as usize
 }
 
 impl Display for Primop {
@@ -308,7 +309,8 @@ impl Display for Primop {
             BitwiseXor => write!(f, "bitwise-xor"),
             ArithmeticShift => write!(f, "arithmetic-shift"),
             BitCount => write!(f, "bit-count"),
-            MakeSyntax => write!(f, "make-syntax")
+            MakeSyntax => write!(f, "make-syntax"),
+            MakeType => write!(f, "make-type")
         }
     }
 }
@@ -415,6 +417,8 @@ impl HeapValue<()> {
                 UnpackedHeapValue::Syntax(HeapValue { value: self.value, _phantom: PhantomData }),
             HeapTag::Record =>
                 UnpackedHeapValue::Record(HeapValue { value: self.value, _phantom: PhantomData }),
+            HeapTag::Type =>
+                UnpackedHeapValue::Type(HeapValue { value: self.value, _phantom: PhantomData }),
         }
     }
 }

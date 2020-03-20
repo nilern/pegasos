@@ -393,24 +393,12 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                 state.push(1u16);
                 Ok(Op::Continue)
             },
-            UnpackedHeapValue::String(_) => {
-                state.push(1u16);
-                Ok(Op::Continue)
-            },
-            UnpackedHeapValue::Closure(_) => {
-                state.push(1u16);
-                Ok(Op::Continue)
-            },
-            UnpackedHeapValue::Bindings(_) => {
-                state.push(1u16);
-                Ok(Op::Continue)
-            },
             UnpackedHeapValue::Syntax(syntax) => {
                 state.pop().unwrap();
                 state.push(syntax.datum);
                 Ok(Op::Eval)
             },
-            UnpackedHeapValue::Record(_) => {
+            _ => {
                 state.push(1u16);
                 Ok(Op::Continue)
             }

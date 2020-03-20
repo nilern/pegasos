@@ -27,7 +27,8 @@ pub enum HeapTag {
     Closure = 0x4,
     Bindings = 0x5,
     Syntax = 0x6,
-    Record = 0x7
+    Record = 0x7,
+    Type = 0x8
 }
 
 impl HeapTag {
@@ -76,7 +77,8 @@ pub enum UnpackedHeapValue {
     Bindings(Bindings),
     Closure(Closure),
     Syntax(Syntax),
-    Record(Record)
+    Record(Record),
+    Type(Type)
 }
 
 impl Display for UnpackedHeapValue {
@@ -114,11 +116,8 @@ impl Display for UnpackedHeapValue {
             UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f),
             UnpackedHeapValue::Syntax(so) =>
                 write!(f, "#<syntax @ {}:{}:{} {}>", so.source, so.line, so.column, so.datum),
-            UnpackedHeapValue::Record(record) => write!(
-                f,
-                "#<record {}>",
-                Record::try_from(record.typ).unwrap().slots().get(3).unwrap()
-            )
+            UnpackedHeapValue::Record(record) => write!(f, "#<record {}>", record.typ.name),
+            UnpackedHeapValue::Type(t) => write!(f, "#<type {} {}>", t.name, Value::from(t.fields))
         }
     }
 }
@@ -811,20 +810,39 @@ impl Value {
                     state.remove(1).unwrap();
                     state.pop().unwrap()
                 },
-                UnpackedHeapValue::Symbol(_) => self,
-                UnpackedHeapValue::String(_) => self,
-                UnpackedHeapValue::Bindings(_) => self,
-                UnpackedHeapValue::Closure(_) => self,
-                UnpackedHeapValue::Record(_) => self
+                _ => self
             },
-            UnpackedValue::Fixnum(_) => self,
-            UnpackedValue::Flonum(_) => self,
-            UnpackedValue::Char(_) => self,
-            UnpackedValue::Bool(_) => self,
-            UnpackedValue::Nil => self,
-            UnpackedValue::Unbound => self,
-            UnpackedValue::Unspecified => self
+            _ => self
         }
+    }
+}
+
+// ---
+
+pub type Type = HeapValue<TypeData>;
+
+#[repr(C)]
+pub struct TypeData {
+    pub parent: Value,
+    pub name: Symbol,
+    pub fields: Vector
+}
+
+impl Type {
+    pub fn new(
+        state: &mut State, parent: Option<Value>, name: Symbol, fields: Vector
+    ) -> Option<Self> {
+        state
+            .alloc::<TypeData>(Object::new(Header::new(
+                HeapTag::Type,
+                size_of::<TypeData>() / size_of::<Value>()
+            )))
+            .map(|mut res| {
+                res.parent = parent.unwrap_or(Value::FALSE);
+                res.name = name;
+                res.fields = fields;
+                res
+            })
     }
 }
 
@@ -834,7 +852,7 @@ pub type Record = HeapValue<RecordData>;
 
 #[repr(C)]
 pub struct RecordData {
-    pub typ: Value
+    pub typ: Type
 }
 
 impl Heaped for RecordData {

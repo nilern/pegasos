@@ -4,7 +4,7 @@ use std::ptr;
 
 use super::error::PgsError;
 use super::interpreter::{Op, RuntimeError};
-use super::objects::{Cars, Closure, Pair, Symbol, Syntax, Vector};
+use super::objects::{Cars, Closure, Pair, Symbol, Syntax, Type, Vector};
 use super::refs::{FrameTag, HeapValue, Primop, Tag, Value};
 use super::state::State;
 
@@ -40,7 +40,8 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         BitwiseXor => bitwise_xor(state),
         ArithmeticShift => arithmetic_shift(state),
         BitCount => bit_count(state),
-        MakeSyntax => make_syntax(state)
+        MakeSyntax => make_syntax(state),
+        MakeType => make_type(state)
     }
 }
 
@@ -438,6 +439,22 @@ primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line
         Syntax::new(state, datum, scopes, source, line, column).unwrap()
     });
     state.push(syntax);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { make_type state (parent: Value, name: Symbol, fields: Vector) {
+    let typ = Type::new(state, Some(parent), name, fields).unwrap_or_else(|| {
+        state.push(parent);
+        state.push(name);
+        state.push(fields);
+        unsafe { state.collect_garbage(); }
+        let fields = unsafe { transmute::<Value, Vector>(state.pop().unwrap()) };
+        let name = unsafe { transmute::<Value, Symbol>(state.pop().unwrap()) };
+        let parent = state.pop().unwrap();
+        Type::new(state, Some(parent), name, fields).unwrap()
+    });
+    state.push(typ);
     state.push(1u16);
     Ok(Op::Continue)
 }}

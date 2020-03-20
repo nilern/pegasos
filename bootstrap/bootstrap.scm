@@ -19,7 +19,7 @@
 (define symbol?
   (lambda (v)
     (if (eq? (##immediate-tag v) 1)
-      (eq? (##heap-tag v) 9)
+      (eq? (##heap-tag v) 1)
       #f)))
 
 (define vector?

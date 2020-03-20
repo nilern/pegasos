@@ -44,6 +44,9 @@
 (define <syntax> (make-rtd '<syntax> #()))
 (vector-set! builtin-types 14 <syntax>)
 
+(define <type> (make-rtd '<type> #()))
+(vector-set! builtin-types 15 <type>)
+
 (define type
   (lambda (v)
     (let* ((i (##immediate-tag v)))
