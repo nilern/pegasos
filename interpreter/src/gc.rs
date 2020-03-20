@@ -81,7 +81,8 @@ impl<O: HeapObject> MemoryManager<O> {
     }
 
     pub fn alloc(&mut self, base: O) -> Option<O::Ref> {
-        let align = base.align().max(align_of::<O>()); // sic
+        // TODO: Get minimum alignment from client instead of hardcoding here:
+        let align = base.align().max(align_of::<u64>()); // sic
 
         let mut free = self.free as usize;
 
