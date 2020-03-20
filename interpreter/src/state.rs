@@ -11,16 +11,18 @@ use super::error::PgsError;
 use super::gc::MemoryManager;
 use super::interpreter::RuntimeError;
 use super::objects::{
-    Bindings, Cars, Closure, Object, Pair, PgsString, Record, Symbol, SymbolTable, Syntax, Vector
+    Bindings, Cars, Closure, Object, Pair, PgsString, Record, Symbol, SymbolTable, Syntax, Type,
+    Vector
 };
 use super::parser::Loc;
-use super::refs::{FrameTag, HeapValue, Primop, Value};
+use super::refs::{FrameTag, HeapValue, Primop, Tag, Value};
 
 pub struct State {
     heap: MemoryManager<Object>,
     symbol_table: SymbolTable,
     stack: Vec<Value>,
-    env: Bindings
+    env: Bindings,
+    immediate_types: [Value; 8]
 }
 
 impl State {
@@ -32,11 +34,25 @@ impl State {
             heap: MemoryManager::new(initial_heap, max_heap),
             symbol_table: SymbolTable::new(),
             stack: Vec::with_capacity(Self::STACK_LEN),
-            env: unsafe { transmute(Value::UNBOUND) } // HACK
+            env: unsafe { transmute(Value::UNBOUND) }, // HACK
+            immediate_types: [Value::FALSE; 8]
         };
         res.env = Bindings::new(&mut res, None).unwrap();
 
         unsafe {
+            let empty_fields = Vector::new(&mut res, 0).unwrap();
+
+            for tag in Tag::iter() {
+                if tag != Tag::ORef {
+                    res.push_symbol(&format!("{}", tag));
+                    let name = transmute::<Value, Symbol>(res.peek().unwrap());
+                    let typ = Type::new(&mut res, None, name, empty_fields).unwrap().into();
+                    res.immediate_types[tag as usize] = typ;
+                    res.push(typ);
+                    res.define();
+                }
+            }
+
             res.push_symbol("*include-path*");
             for dir in path {
                 res.push_string(dir.to_str().unwrap());
@@ -96,6 +112,8 @@ impl State {
     pub fn remove(&mut self, i: usize) -> Option<Value> {
         self.stack.len().checked_sub(1 + i).map(|i| self.stack.remove(i))
     }
+
+    pub fn immediate_type(&self, v: Value) -> Value { self.immediate_types[v.tag() as usize] }
 
     pub fn alloc<T: ?Sized>(&mut self, base: Object) -> Option<HeapValue<T>> {
         self.heap.alloc(base).map(|v| unsafe { transmute(v) })
@@ -376,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_gc() {
-        let mut state = State::new(&[], 1 << 14, 1 << 20);
+        let mut state = State::new(&[], 1 << 20, 1 << 20);
         let n = 4i16;
         for i in 0..n {
             state.push(i);

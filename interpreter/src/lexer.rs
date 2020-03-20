@@ -316,7 +316,7 @@ mod tests {
     fn test_lexer() {
         use Token::*;
 
-        let mut state = State::new(&[], 1 << 14, 1 << 20);
+        let mut state = State::new(&[], 1 << 20, 1 << 20);
         let foo: Symbol = Symbol::new(&mut state, "foo").unwrap();
 
         let input = "  (23 #f\n foo )  ";

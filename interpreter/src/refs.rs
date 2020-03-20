@@ -21,7 +21,7 @@ use super::util::fsize;
 // allocation to pay for. 32-bit might have a somewhat bad time but if you are
 // still on 32-bit you already have a bad time, anyway.
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, EnumIter)]
 pub enum Tag {
     Fixnum = 0, // i29 | i61, 0 => less fiddly arithmetic
     ORef = 1,   // the 1 should often sink into addressing modes
@@ -31,6 +31,21 @@ pub enum Tag {
     Nil = 5,     // ()
     Unbound = 6, // Hash table sentinel
     Unspecified = 7
+}
+
+impl Display for Tag {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "<{}>", match *self {
+            Tag::Fixnum => "fixnum",
+            Tag::ORef => "oref",
+            Tag::Flonum => "flonum",
+            Tag::Char => "char",
+            Tag::Bool => "boolean",
+            Tag::Nil => "null",
+            Tag::Unbound => "unbound",
+            Tag::Unspecified => "unspecified"
+        })
+    }
 }
 
 pub enum UnpackedValue {
@@ -272,7 +287,8 @@ pub enum Primop {
     ArithmeticShift = 26 << Value::SHIFT | Tag::Fixnum as usize,
     BitCount = 27 << Value::SHIFT | Tag::Fixnum as usize,
     MakeSyntax = 28 << Value::SHIFT | Tag::Fixnum as usize,
-    MakeType = 29 << Value::SHIFT | Tag::Fixnum as usize
+    MakeType = 29 << Value::SHIFT | Tag::Fixnum as usize,
+    ImmediateType = 30 << Value::SHIFT | Tag::Fixnum as usize
 }
 
 impl Display for Primop {
@@ -310,7 +326,8 @@ impl Display for Primop {
             ArithmeticShift => write!(f, "arithmetic-shift"),
             BitCount => write!(f, "bit-count"),
             MakeSyntax => write!(f, "make-syntax"),
-            MakeType => write!(f, "make-type")
+            MakeType => write!(f, "make-type"),
+            ImmediateType => write!(f, "immediate-type")
         }
     }
 }

@@ -41,7 +41,8 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         ArithmeticShift => arithmetic_shift(state),
         BitCount => bit_count(state),
         MakeSyntax => make_syntax(state),
-        MakeType => make_type(state)
+        MakeType => make_type(state),
+        ImmediateType => immediate_type(state)
     }
 }
 
@@ -454,6 +455,13 @@ primitive! { make_type state (parent: Value, name: Symbol, fields: Vector) {
         let parent = state.pop().unwrap();
         Type::new(state, Some(parent), name, fields).unwrap()
     });
+    state.push(typ);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { immediate_type state (v: Value) {
+    let typ = state.immediate_type(v);
     state.push(typ);
     state.push(1u16);
     Ok(Op::Continue)

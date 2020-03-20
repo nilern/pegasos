@@ -1,61 +1,41 @@
-(define builtin-types (make-vector 16))
+(define builtin-types (make-vector 9))
 
 ;;; FIXME: `(not (eq? (type-hash 23) (%identity-hash <fixnum>)))` etc.
 
-(define <fixnum> (make-rtd '<fixnum> #()))
-(vector-set! builtin-types 0 <fixnum>)
-
-(define <flonum> (make-rtd '<flonum> #()))
-(vector-set! builtin-types 2 <flonum>)
-
-(define <char> (make-rtd '<char> #()))
-(vector-set! builtin-types 3 <char>)
-
-(define <boolean> (make-rtd '<boolean> #()))
-(vector-set! builtin-types 4 <boolean>)
-
-(define <null> (make-rtd '<null> #()))
-(vector-set! builtin-types 5 <null>)
-
-(define <unbound> (make-rtd '<unbound> #()))
-(vector-set! builtin-types 6 <unbound>)
-
-(define <unspecified> (make-rtd '<unspecified> #()))
-(vector-set! builtin-types 7 <unspecified>)
-
 (define <string> (make-rtd '<string> #()))
-(vector-set! builtin-types 8 <string>)
+(vector-set! builtin-types 0 <string>)
 
 (define <symbol> (make-rtd '<symbol> #()))
-(vector-set! builtin-types 9 <symbol>)
+(vector-set! builtin-types 1 <symbol>)
 
-(define <pair> (make-rtd '<pair> #()))
-(vector-set! builtin-types 10 <pair>)
-
+(define <pair> (make-rtd '<pair> #((mutable car) (mutable cdr))))
+(vector-set! builtin-types 2 <pair>)
+ 
 (define <vector> (make-rtd '<vector> #()))
-(vector-set! builtin-types 11 <vector>)
+(vector-set! builtin-types 3 <vector>)
 
 (define <procedure> (make-rtd '<procedure> #()))
-(vector-set! builtin-types 12 <procedure>)
+(vector-set! builtin-types 4 <procedure>)
 
 (define <environment> (make-rtd '<environment> #()))
-(vector-set! builtin-types 13 <environment>)
+(vector-set! builtin-types 5 <environment>)
 
-(define <syntax> (make-rtd '<syntax> #()))
-(vector-set! builtin-types 14 <syntax>)
+(define <syntax> (make-rtd '<syntax> #((immutable datum) (immutable scopes)
+                                       (immutable source) (immutable line) (immutable column))))
+(vector-set! builtin-types 6 <syntax>)
 
-(define <type> (make-rtd '<type> #()))
-(vector-set! builtin-types 15 <type>)
+(define <type> (make-rtd '<type> #((immutable parent) (immutable name) (immutable fields))))
+(vector-set! builtin-types 8 <type>)
 
 (define type
   (lambda (v)
-    (let* ((i (##immediate-tag v)))
-      (if (eq? i 1)
+    (let* ((t (##immediate-type v)))
+      (if t
+        t
         (let* ((h (##heap-tag v)))
           (if (eq? h 7)
             (##slot-ref v 0)
-            (vector-ref builtin-types (fx+ 8 h))))
-        (vector-ref builtin-types i)))))
+            (vector-ref builtin-types h)))))))
 
 (define type-hash
   (lambda (v)
