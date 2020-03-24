@@ -80,7 +80,7 @@ impl<O: HeapObject> MemoryManager<O> {
         Self { max_heap, fromspace, tospace, free, grey: ptr::null_mut() }
     }
 
-    pub fn alloc(&mut self, base: O) -> Option<O::Ref> {
+    pub fn alloc(&mut self, base: O, size: usize) -> Option<O::Ref> {
         // TODO: Get minimum alignment from client instead of hardcoding here:
         let align = base.align().min(align_of::<u64>()); // sic
 
@@ -88,7 +88,7 @@ impl<O: HeapObject> MemoryManager<O> {
 
         let mut data = free.checked_add(size_of::<O>())?;
         data = data.checked_add(align - 1)? & !(align - 1);
-        free = data.checked_add(base.size())?;
+        free = data.checked_add(size)?;
 
         if free <= self.tospace.end as usize {
             unsafe {
@@ -129,7 +129,7 @@ impl<O: HeapObject> MemoryManager<O> {
                 match obj.forwarded() {
                     Some(res) => res,
                     None => {
-                        let res = self.alloc(*obj).unwrap(); // tospace is at least as big as fromspace
+                        let res = self.alloc(*obj, obj.size()).unwrap(); // tospace is at least as big as fromspace
                         let new_obj = unsafe { &mut *res.as_mut_ptr().unwrap() }; // surely it is a pointer, we just allocated it
                         unsafe {
                             ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size());
@@ -147,7 +147,6 @@ impl<O: HeapObject> MemoryManager<O> {
         let align = align_of::<O>();
         let grey = (self.grey as usize) + (align - 1) & !(align - 1);
         let mut grey = grey as *const O;
-
         while (grey as *const u8) < self.free {
             if O::is_alignment_hole(grey) {
                 grey = unsafe { grey.add(1) };

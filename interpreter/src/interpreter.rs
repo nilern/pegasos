@@ -6,10 +6,10 @@ use std::mem::transmute;
 
 use super::error::PgsError;
 use super::lexer::Lexer;
-use super::objects::{BuiltInType, Closure, Pair, PgsString, Symbol, Syntax, UnpackedHeapValue};
+use super::objects::{Bindings, Closure, Pair, PgsString, Symbol, Syntax, Type, UnpackedHeapValue};
 use super::parser::Parser;
 use super::primitives;
-use super::refs::{FrameTag, Primop, UnpackedValue, Value};
+use super::refs::{Fixnum, FrameTag, Primop, UnpackedValue, Value};
 use super::state::State;
 
 #[derive(Debug)]
@@ -21,14 +21,15 @@ impl Display for SyntaxError {
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    Type { expected: BuiltInType, value: Value },
-    Overflow(BuiltInType),
-    Bounds { value: Value, index: isize, len: usize },
+    Type { expected: Type, value: Value },
+    FixnumOverflow,
+    FlonumOverflow,
+    Bounds { value: Value, index: Fixnum, len: usize },
     Argc { callee: Value, params: (usize, bool), got: usize },
     Retc { cont_params: (usize, bool), got: usize },
     Uncallable(Value),
     Unbound(Symbol),
-    NotInPath(Value), // HACK since PgsString seems unsized (but isn't really)
+    NotInPath(PgsString),
     IO(io::Error)
 }
 
@@ -37,7 +38,8 @@ impl Display for RuntimeError {
         match self {
             RuntimeError::Type { expected, value } =>
                 write!(f, "Type error: {} is not of type {}", value, expected),
-            RuntimeError::Overflow(t) => write!(f, "{} overflow", t),
+            RuntimeError::FixnumOverflow => write!(f, "fixnum overflow"),
+            RuntimeError::FlonumOverflow => write!(f, "flonum overflow"),
             RuntimeError::Bounds { value, index, len } =>
                 write!(f, "Out of bounds indexing {} of length {} with {}", value, len, index),
             RuntimeError::Argc { callee, params: (paramc, variadic), got } => {
@@ -76,7 +78,7 @@ pub enum Op {
 
 pub fn run(state: &mut State) -> Result<(), PgsError> {
     let mut op = Op::Eval;
-    let expr = state.pop().unwrap();
+    let expr = state.pop::<Value>().unwrap().unwrap();
     state.push_env();
     state.push(FrameTag::Done);
     state.push(expr);
@@ -93,21 +95,21 @@ pub fn run(state: &mut State) -> Result<(), PgsError> {
 
 fn eval(state: &mut State) -> Result<Op, PgsError> {
     match state.peek().unwrap().unpack() {
-        UnpackedValue::ORef(oref) => match oref.unpack() {
+        UnpackedValue::ORef(oref) => match oref.unpack(state) {
             UnpackedHeapValue::Pair(pair) => {
-                if let Ok(callee) = Syntax::try_from(pair.car) {
-                    if let Ok(sym) = Symbol::try_from(callee.datum) {
+                if let Ok(callee) = state.downcast::<Syntax>(pair.car) {
+                    if let Ok(sym) = state.downcast::<Symbol>(callee.datum) {
                         match sym.as_str() {
                             "define" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     // FIXME: Fail if not on toplevel
-                                    if let Ok(syntax) = Syntax::try_from(args.car) {
-                                        if let Ok(name) = Symbol::try_from(syntax.datum) {
-                                            if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                    if let Ok(syntax) = state.downcast::<Syntax>(args.car) {
+                                        if let Ok(name) = state.downcast::<Symbol>(syntax.datum) {
+                                            if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
                                                 let value_expr = rargs.car;
 
                                                 if rargs.cdr == Value::NIL {
-                                                    state.pop();
+                                                    state.pop::<Value>().unwrap().unwrap();
                                                     state.push(name);
                                                     state.push_env();
                                                     state.push(FrameTag::Define);
@@ -122,14 +124,14 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "set!" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
-                                    if let Ok(syntax) = Syntax::try_from(args.car) {
-                                        if let Ok(name) = Symbol::try_from(syntax.datum) {
-                                            if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                    if let Ok(syntax) = state.downcast::<Syntax>(args.car) {
+                                        if let Ok(name) = state.downcast::<Symbol>(syntax.datum) {
+                                            if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
                                                 let value_expr = rargs.car;
 
                                                 if rargs.cdr == Value::NIL {
-                                                    state.pop();
+                                                    state.pop::<Value>().unwrap().unwrap();
                                                     state.push(name);
                                                     state.push_env();
                                                     state.push(FrameTag::Set);
@@ -144,15 +146,15 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "begin" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     let stmt = args.car;
 
                                     if args.cdr == Value::NIL {
-                                        state.pop();
+                                        state.pop::<Value>().unwrap().unwrap();
                                         state.push(stmt);
                                         return Ok(Op::Eval);
                                     } else {
-                                        state.pop();
+                                        state.pop::<Value>().unwrap().unwrap();
                                         state.push(args.cdr);
                                         state.push_env();
                                         state.push(FrameTag::Stmt);
@@ -164,17 +166,17 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "if" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     let condition = args.car;
 
-                                    if let Ok(branches) = Pair::try_from(args.cdr) {
+                                    if let Ok(branches) = state.downcast::<Pair>(args.cdr) {
                                         let succeed = branches.car;
 
-                                        if let Ok(rargs) = Pair::try_from(branches.cdr) {
+                                        if let Ok(rargs) = state.downcast::<Pair>(branches.cdr) {
                                             let fail = rargs.car;
 
                                             if rargs.cdr == Value::NIL {
-                                                state.pop();
+                                                state.pop::<Value>().unwrap().unwrap();
                                                 state.push(succeed);
                                                 state.push(fail);
                                                 state.push_env();
@@ -189,9 +191,9 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "syntax" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     if args.cdr == Value::NIL {
-                                        state.pop();
+                                        state.pop::<Value>().unwrap().unwrap();
                                         state.push(args.car);
                                         state.push(1u16);
                                         return Ok(Op::Continue);
@@ -201,9 +203,9 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "quote" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     if args.cdr == Value::NIL {
-                                        state.pop();
+                                        state.pop::<Value>().unwrap().unwrap();
                                         let datum = unsafe { args.car.to_datum(state) };
                                         state.push(datum);
                                         state.push(1u16);
@@ -214,31 +216,38 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "let*" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     let bindings = args.car;
 
-                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                    if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
                                         let body = rargs.car;
 
                                         if rargs.cdr == Value::NIL {
-                                            if let Ok(bindings) = Syntax::try_from(bindings) {
-                                                if let Ok(bindings) = Pair::try_from(bindings.datum)
+                                            if let Ok(bindings) = state.downcast::<Syntax>(bindings)
+                                            {
+                                                if let Ok(bindings) =
+                                                    state.downcast::<Pair>(bindings.datum)
                                                 {
                                                     let binding = bindings.car;
 
-                                                    if let Ok(binding) = Syntax::try_from(binding) {
+                                                    if let Ok(binding) =
+                                                        state.downcast::<Syntax>(binding)
+                                                    {
                                                         if let Ok(binding) =
-                                                            Pair::try_from(binding.datum)
+                                                            state.downcast::<Pair>(binding.datum)
                                                         {
                                                             let binder = binding.car;
 
                                                             if let Ok(exprs) =
-                                                                Pair::try_from(binding.cdr)
+                                                                state.downcast::<Pair>(binding.cdr)
                                                             {
                                                                 let expr = exprs.car;
 
                                                                 if exprs.cdr == Value::NIL {
-                                                                    state.pop();
+                                                                    state
+                                                                        .pop::<Value>()
+                                                                        .unwrap()
+                                                                        .unwrap();
                                                                     state.push(body);
                                                                     state.push(bindings.cdr);
                                                                     state.push(binder);
@@ -251,7 +260,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                                         }
                                                     }
                                                 } else if bindings.datum == Value::NIL {
-                                                    state.pop();
+                                                    state.pop::<Value>().unwrap().unwrap();
                                                     state.push(body);
                                                     return Ok(Op::Eval);
                                                 }
@@ -263,27 +272,29 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "lambda" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     let params = args.car;
 
-                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
+                                    if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
                                         let body = rargs.car;
 
                                         if rargs.cdr == Value::NIL {
-                                            state.pop();
+                                            state.pop::<Value>().unwrap().unwrap();
                                             state.push_env();
                                             state.push(body);
 
-                                            if let Ok(params) = Syntax::try_from(params) {
+                                            if let Ok(params) = state.downcast::<Syntax>(params) {
                                                 let mut params = params.datum;
                                                 let mut arity = 0;
 
-                                                while let Ok(param_pair) = Pair::try_from(params) {
+                                                while let Ok(param_pair) =
+                                                    state.downcast::<Pair>(params)
+                                                {
                                                     if let Ok(param) =
-                                                        Syntax::try_from(param_pair.car)
+                                                        state.downcast::<Syntax>(param_pair.car)
                                                     {
                                                         if let Ok(param) =
-                                                            Symbol::try_from(param.datum)
+                                                            state.downcast::<Symbol>(param.datum)
                                                         {
                                                             arity += 1;
                                                             params = param_pair.cdr;
@@ -300,14 +311,16 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                                     state.insert_after(arity, params);
                                                 } else {
                                                     let params = if let Ok(params) =
-                                                        Syntax::try_from(params)
+                                                        state.downcast::<Syntax>(params)
                                                     {
                                                         params.datum
                                                     } else {
                                                         params
                                                     };
 
-                                                    if let Ok(params) = Symbol::try_from(params) {
+                                                    if let Ok(params) =
+                                                        state.downcast::<Symbol>(params)
+                                                    {
                                                         state.insert_after(arity, params.into());
                                                     } else {
                                                         state.raise(SyntaxError(params.into()))?;
@@ -315,8 +328,8 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                                 }
 
                                                 unsafe {
-                                                    state.vector(arity);
-                                                    state.closure(Primop::Call, 4);
+                                                    state.vector(arity.try_into()?);
+                                                    state.closure(Primop::Call, 4.into());
                                                 }
                                                 state.push(1u16);
                                                 return Ok(Op::Continue);
@@ -328,16 +341,16 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "include" => {
-                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
                                     if args.cdr == Value::NIL {
-                                        if let Ok(filename) = Syntax::try_from(args.car) {
+                                        if let Ok(filename) = state.downcast::<Syntax>(args.car) {
                                             if let Ok(filename) =
-                                                PgsString::try_from(filename.datum)
+                                                state.downcast::<PgsString>(filename.datum)
                                             {
                                                 if let Some(path) = state.resolve_path(&filename) {
                                                     match fs::read_to_string(&path) {
                                                         Ok(contents) => {
-                                                            state.pop();
+                                                            state.pop::<Value>().unwrap().unwrap();
                                                             let mut parser = Parser::new(
                                                                 Lexer::new(contents.chars())
                                                             );
@@ -373,7 +386,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                     }
                 }
 
-                state.pop();
+                state.pop::<Value>().unwrap().unwrap();
                 state.push(pair.cdr);
                 state.push(0u16);
                 state.push_env();
@@ -387,14 +400,14 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                 Ok(Op::Continue)
             },
             UnpackedHeapValue::Vector(_) => {
-                let vec = state.pop().unwrap();
+                let vec = state.pop::<Value>().unwrap().unwrap();
                 let vec = unsafe { vec.to_datum(state) };
                 state.push(vec);
                 state.push(1u16);
                 Ok(Op::Continue)
             },
             UnpackedHeapValue::Syntax(syntax) => {
-                state.pop().unwrap();
+                state.pop::<Value>().unwrap().unwrap();
                 state.push(syntax.datum);
                 Ok(Op::Eval)
             },
@@ -429,14 +442,14 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
 }
 
 fn continu(state: &mut State) -> Result<Op, PgsError> {
-    let value_count: usize = state.pop().unwrap().try_into().unwrap();
-    state.set_env(state.get(value_count + 1).unwrap().try_into().unwrap());
+    let value_count: usize = state.pop().unwrap()?;
+    state.set_env(state.downcast::<Bindings>(state.get(value_count + 1).unwrap()).unwrap());
     match unsafe { transmute::<Value, FrameTag>(state.get(value_count).unwrap()) } {
         FrameTag::Done => {
             if value_count == 1 {
-                let res = state.pop().unwrap();
-                state.pop(); // frame tag
-                state.pop(); // env
+                let res: Value = state.pop().unwrap().unwrap();
+                state.pop::<Value>().unwrap().unwrap(); // frame tag
+                state.pop::<Value>().unwrap().unwrap(); // env
                 state.push(res);
                 Ok(Op::Stop)
             } else {
@@ -445,11 +458,11 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         },
         FrameTag::Define => {
             if value_count == 1 {
-                let value = state.pop().unwrap();
-                state.pop(); // frame tag
-                state.pop(); // env
+                let value: Value = state.pop().unwrap().unwrap();
+                state.pop::<Value>().unwrap().unwrap(); // frame tag
+                state.pop::<Value>().unwrap().unwrap(); // env
                 state.push(value);
-                unsafe { state.define() };
+                unsafe { state.define()? };
                 state.push(Value::UNSPECIFIED);
                 state.push(1u16);
                 Ok(Op::Continue)
@@ -459,9 +472,9 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         },
         FrameTag::Set => {
             if value_count == 1 {
-                let value = state.pop().unwrap();
-                state.pop(); // frame tag
-                state.pop(); // env
+                let value: Value = state.pop().unwrap().unwrap();
+                state.pop::<Value>().unwrap().unwrap(); // frame tag
+                state.pop::<Value>().unwrap().unwrap(); // env
                 state.push(value);
                 state.set()?;
                 state.push(1u16);
@@ -472,15 +485,15 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         },
         FrameTag::CondBranch => {
             if value_count == 1 {
-                if state.pop().unwrap() != Value::FALSE {
-                    state.pop(); // frame tag
-                    state.pop(); // env
-                    state.pop(); // #f branch
+                if state.pop::<Value>().unwrap().unwrap() != Value::FALSE {
+                    state.pop::<Value>().unwrap().unwrap(); // frame tag
+                    state.pop::<Value>().unwrap().unwrap(); // env
+                    state.pop::<Value>().unwrap().unwrap(); // #f branch
                 } else {
-                    state.pop(); // frame tag
-                    state.pop(); // env
-                    let branch = state.pop().unwrap();
-                    state.pop(); // non-#f branch
+                    state.pop::<Value>().unwrap().unwrap(); // frame tag
+                    state.pop::<Value>().unwrap().unwrap(); // env
+                    let branch: Value = state.pop().unwrap().unwrap();
+                    state.pop::<Value>().unwrap().unwrap(); // non-#f branch
                     state.push(branch);
                 }
                 Ok(Op::Eval)
@@ -490,24 +503,24 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         },
         FrameTag::Let => {
             if value_count == 1 {
-                if let Ok(name) = Syntax::try_from(state.get(3).unwrap()) {
-                    if let Ok(name) = Symbol::try_from(name.datum) {
+                if let Ok(name) = state.downcast::<Syntax>(state.get(3).unwrap()) {
+                    if let Ok(name) = state.downcast::<Symbol>(name.datum) {
                         state.insert_after(1, name.into());
                         unsafe {
                             state.push_scope();
-                            state.define();
+                            state.define()?;
                         }
 
                         let bindings = state.get(3).unwrap();
 
-                        if let Ok(bindings) = Pair::try_from(bindings) {
+                        if let Ok(bindings) = state.downcast::<Pair>(bindings) {
                             let binding = bindings.car;
 
-                            if let Ok(binding) = Syntax::try_from(binding) {
-                                if let Ok(binding) = Pair::try_from(binding.datum) {
+                            if let Ok(binding) = state.downcast::<Syntax>(binding) {
+                                if let Ok(binding) = state.downcast::<Pair>(binding.datum) {
                                     let binder = binding.car;
 
-                                    if let Ok(exprs) = Pair::try_from(binding.cdr) {
+                                    if let Ok(exprs) = state.downcast::<Pair>(binding.cdr) {
                                         let expr = exprs.car;
 
                                         if exprs.cdr == Value::NIL {
@@ -523,10 +536,10 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
 
                             state.raise(SyntaxError(binding))?;
                         } else if bindings == Value::NIL {
-                            state.pop(); // frame tag
-                            state.pop(); // env
-                            state.pop(); // name
-                            state.pop(); // bindings
+                            state.pop::<Value>().unwrap().unwrap(); // frame tag
+                            state.pop::<Value>().unwrap().unwrap(); // env
+                            state.pop::<Value>().unwrap().unwrap(); // name
+                            state.pop::<Value>().unwrap().unwrap(); // bindings
                             return Ok(Op::Eval);
                         } else {
                             state.raise(SyntaxError(bindings))?;
@@ -544,9 +557,9 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         FrameTag::Stmt => {
             let stmts = state.get(value_count + 2).unwrap();
 
-            if let Ok(stmts) = Pair::try_from(stmts) {
+            if let Ok(stmts) = state.downcast::<Pair>(stmts) {
                 for _ in 0..value_count {
-                    state.pop();
+                    state.pop::<Value>().unwrap().unwrap();
                 }
                 state.put(2, stmts.cdr);
                 state.push(stmts.car);
@@ -563,15 +576,16 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         },
         FrameTag::Arg => {
             if value_count == 1 {
-                let value = state.pop().unwrap();
-                let i: usize = state.get(2).unwrap().try_into().unwrap();
+                let value: Value = state.pop().unwrap().unwrap();
+                let i = state.get(2).unwrap();
+                let i: usize = state.downcast(i)?;
                 let rargs = state.get(3 + i).unwrap();
 
                 // OPTIMIZE:
-                if let Ok(rargs) = Pair::try_from(rargs) {
-                    state.pop(); // frame tag
-                    state.pop(); // env
-                    state.pop(); // i
+                if let Ok(rargs) = state.downcast::<Pair>(rargs) {
+                    state.pop::<Value>().unwrap().unwrap(); // frame tag
+                    state.pop::<Value>().unwrap().unwrap(); // env
+                    state.pop::<Value>().unwrap().unwrap(); // i
                     state.put(i, rargs.cdr);
                     state.push(value);
                     state.push(Value::try_from(i + 1).unwrap());
@@ -580,9 +594,9 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
                     state.push(rargs.car);
                     Ok(Op::Eval)
                 } else if rargs == Value::NIL {
-                    state.pop(); // frame tag
-                    state.pop(); // env
-                    state.pop(); // i
+                    state.pop::<Value>().unwrap().unwrap(); // frame tag
+                    state.pop::<Value>().unwrap().unwrap(); // env
+                    state.pop::<Value>().unwrap().unwrap(); // i
                     state.push(value);
                     state.push(Value::try_from(i).unwrap()); // argc for apply
                     state.remove(i + 2); // rargs
@@ -605,9 +619,10 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
 
 fn apply(state: &mut State) -> Result<Op, PgsError> {
     // ... callee arg{argc} argc
-    let arg_count: usize = state.peek().unwrap().try_into().unwrap();
+    let arg_count = state.peek().unwrap();
+    let arg_count: usize = state.downcast(arg_count)?;
 
-    if let Ok(callee) = Closure::try_from(state.get(arg_count + 1).unwrap()) {
+    if let Ok(callee) = state.downcast::<Closure>(state.get(arg_count + 1).unwrap()) {
         primitives::perform(callee.code, state)
     } else {
         state.raise(RuntimeError::Uncallable(state.get(arg_count + 1).unwrap()))

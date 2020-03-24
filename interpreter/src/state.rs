@@ -1,4 +1,4 @@
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::env;
 use std::io;
 use std::iter;
@@ -11,45 +11,170 @@ use super::error::PgsError;
 use super::gc::MemoryManager;
 use super::interpreter::RuntimeError;
 use super::objects::{
-    Bindings, Cars, Closure, Object, Pair, PgsString, Record, Symbol, SymbolTable, Syntax, Type,
-    Vector
+    Bindings, BindingsData, Closure, ClosureData, FieldDescriptor, FieldDescriptorData, Object,
+    Pair, PairData, PgsString, PgsStringData, Symbol, SymbolData, SymbolTable, Syntax,
+    SyntaxObject, Type, TypeData, Vector, VectorData
 };
 use super::parser::Loc;
-use super::refs::{FrameTag, HeapValue, Primop, Tag, Value};
+use super::refs::{DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
+use super::util::{Bool, False, True};
+
+// ---
 
 pub struct State {
+    immediate_types: [Value; 8],
+    object_types: BuiltinObjectTypes,
     heap: MemoryManager<Object>,
     symbol_table: SymbolTable,
     stack: Vec<Value>,
-    env: Bindings,
-    immediate_types: [Value; 8]
+    env: Bindings
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct BuiltinObjectTypesStruct {
+    pub string: Type,
+    pub symbol: Type,
+    pub pair: Type,
+    pub vector: Type,
+    pub procedure: Type,
+    pub environment: Type,
+    pub syntax: Type,
+    pub typ: Type,
+    pub field_descriptor: Type
+}
+
+#[repr(C)]
+union BuiltinObjectTypes {
+    named: BuiltinObjectTypesStruct,
+    indexed: [Value; 9]
 }
 
 impl State {
     const STACK_SIZE: usize = 1 << 12; // 4 kiB
     const STACK_LEN: usize = Self::STACK_SIZE / size_of::<Value>();
 
+    // FIXME:
     pub fn new(path: &[PathBuf], initial_heap: usize, max_heap: usize) -> Self {
+        unsafe fn new_pretype<T: DynamicType>(state: &mut State, type_t: Type) -> Type {
+            let is_bytes = T::IsBytes::reify();
+            let is_flex = T::IsFlex::reify();
+            let field_count = if is_bytes {
+                // FIXME: figure out bytes objects with fixed fields (e.g. Symbol)
+                (size_of::<T>() != 0) as usize + is_flex as usize // HACK
+            } else {
+                size_of::<T>() / size_of::<Value>() + is_flex as usize
+            };
+
+            let mut t = Type::unchecked_downcast(
+                state
+                    .heap
+                    .alloc(
+                        Object::new(type_t),
+                        size_of::<TypeData>()
+                            + size_of::<Fixnum>()
+                            + field_count as usize * size_of::<Value>()
+                    )
+                    .unwrap()
+            );
+
+            *t = TypeData {
+                is_bytes: is_bytes.into(),
+                is_flex: is_flex.into(),
+                name: Symbol::unchecked_downcast(Value::UNBOUND), // HACK
+                parent: Value::FALSE,
+                min_size: (size_of::<T>() + is_flex as usize * size_of::<Fixnum>())
+                    .try_into()
+                    .unwrap()
+            };
+            *((&mut *t as *mut TypeData).add(1) as *mut Fixnum) = field_count.try_into().unwrap();
+
+            t
+        }
+
+        fn new_builtin_type<T: DynamicType>(
+            state: &mut State, name: Symbol, fields: &[FieldDescriptor]
+        ) -> Type {
+            let is_flex = T::IsFlex::reify();
+            Type::new(
+                state,
+                T::IsBytes::reify(),
+                is_flex,
+                name,
+                None,
+                (size_of::<T>() + is_flex as usize * size_of::<Fixnum>()).try_into().unwrap(),
+                fields
+            )
+            .unwrap()
+        }
+
         let mut res = Self {
             heap: MemoryManager::new(initial_heap, max_heap),
             symbol_table: SymbolTable::new(),
             stack: Vec::with_capacity(Self::STACK_LEN),
             env: unsafe { transmute(Value::UNBOUND) }, // HACK
-            immediate_types: [Value::FALSE; 8]
+            immediate_types: [Value::FALSE; 8],        // So that the ORef one becomes #f
+            object_types: BuiltinObjectTypes { indexed: [Value::UNBOUND; 9] }
         };
-        res.env = Bindings::new(&mut res, None).unwrap();
 
         unsafe {
-            let empty_fields = Vector::new(&mut res, 0).unwrap();
+            let mut typ = Type::unchecked_downcast(
+                res.heap
+                    .alloc(
+                        Object::new(Type::unchecked_downcast(Value::UNBOUND)), // HACK
+                        2 * (size_of::<TypeData>() + size_of::<Value>())
+                    )
+                    .unwrap()
+            );
+            *typ.header_mut() = Object::new(typ); // Close the circle and a new world is born
+            *typ = TypeData {
+                is_bytes: false.into(),
+                is_flex: true.into(),
+                name: Symbol::unchecked_downcast(Value::UNBOUND), // HACK
+                parent: Value::FALSE,
+                min_size: (size_of::<TypeData>() + size_of::<Value>()).try_into().unwrap()
+            };
+            *((&mut *typ as *mut TypeData).add(1) as *mut Fixnum) =
+                ((size_of::<TypeData>() + size_of::<Fixnum>()) / size_of::<Value>())
+                    .try_into()
+                    .unwrap();
+            res.object_types.named.typ = typ;
 
+            let symbol = new_pretype::<SymbolData>(&mut res, typ);
+            let field_descriptor = new_pretype::<FieldDescriptorData>(&mut res, typ);
+
+            let string = new_pretype::<PgsStringData>(&mut res, typ);
+            let pair = new_pretype::<PairData>(&mut res, typ);
+            let vector = new_pretype::<VectorData>(&mut res, typ);
+            let procedure = new_pretype::<ClosureData>(&mut res, typ);
+            let environment = new_pretype::<BindingsData>(&mut res, typ);
+            let syntax = new_pretype::<SyntaxObject>(&mut res, typ);
+
+            res.object_types.named = BuiltinObjectTypesStruct {
+                string,
+                symbol,
+                pair,
+                vector,
+                procedure,
+                environment,
+                syntax,
+                typ,
+                field_descriptor
+            };
+
+            // FIXME: Fill out names and field descriptors of builtin object types
+
+            res.env = Bindings::new(&mut res, None).unwrap();
+
+            // FIXME: Make identity hashes of these equal the tags:
             for tag in Tag::iter() {
                 if tag != Tag::ORef {
-                    res.push_symbol(&format!("{}", tag));
-                    let name = transmute::<Value, Symbol>(res.peek().unwrap());
-                    let typ = Type::new(&mut res, None, name, empty_fields).unwrap().into();
+                    let name = Symbol::new(&mut res, &format!("{}", tag)).unwrap();
+                    // TODO: Make these not total lies:
+                    let typ =
+                        Type::new(&mut res, true, false, name, None, 0.into(), &[]).unwrap().into();
                     res.immediate_types[tag as usize] = typ;
-                    res.push(typ);
-                    res.define();
+                    res.env.insert(&mut res, name, typ).unwrap();
                 }
             }
 
@@ -61,16 +186,33 @@ impl State {
             for _ in path {
                 res.cons();
             }
-            res.define();
+            res.define().unwrap();
 
             for op in Primop::iter() {
                 res.push_symbol(&format!("{}", op));
                 res.push_primitive(op);
-                res.define();
+                res.define().unwrap();
             }
         }
 
         res
+    }
+
+    pub fn immediate_types(&self) -> &[Value; 8] { &self.immediate_types }
+
+    pub fn types(&self) -> &BuiltinObjectTypesStruct { unsafe { &self.object_types.named } }
+
+    pub fn type_of(&self, v: Value) -> Type {
+        let immediate_type = self.immediate_type(v);
+        if immediate_type != Value::FALSE {
+            unsafe { Type::unchecked_downcast(immediate_type) }
+        } else {
+            unsafe { HeapValue::<()>::unchecked_downcast(v).typ() }
+        }
+    }
+
+    pub fn downcast<T: DynamicDowncast>(&self, v: Value) -> Result<T, RuntimeError> {
+        T::downcast(self, v)
     }
 
     pub fn push<T: Into<Value>>(&mut self, v: T) {
@@ -81,9 +223,9 @@ impl State {
         }
     }
 
-    pub fn pop(&mut self) -> Option<Value> {
+    pub fn pop<T: DynamicDowncast>(&mut self) -> Option<Result<T, RuntimeError>> {
         // FIXME: handle stack underflow
-        self.stack.pop()
+        self.stack.pop().map(|v| self.downcast::<T>(v))
     }
 
     pub fn peek(&self) -> Option<Value> { self.stack.last().map(|&v| v) }
@@ -115,8 +257,28 @@ impl State {
 
     pub fn immediate_type(&self, v: Value) -> Value { self.immediate_types[v.tag() as usize] }
 
-    pub fn alloc<T: ?Sized>(&mut self, base: Object) -> Option<HeapValue<T>> {
-        self.heap.alloc(base).map(|v| unsafe { transmute(v) })
+    pub fn alloc<T: DynamicType<IsFlex = False>>(&mut self) -> Option<HeapValue<T>> {
+        self.heap
+            .alloc(Object::new(T::reify(self)), size_of::<T>())
+            .map(|v| unsafe { transmute::<Value, HeapValue<T>>(v) })
+    }
+
+    pub fn alloc_flex<T: DynamicType<IsFlex = True>>(
+        &mut self, flex_count: Fixnum
+    ) -> Option<HeapValue<T>> {
+        self.heap
+            .alloc(
+                Object::new(T::reify(self)),
+                size_of::<T>()
+                    + size_of::<Fixnum>()
+                    + if T::IsBytes::reify() { size_of::<u8>() } else { size_of::<Value>() }
+                        * <Fixnum as Into<usize>>::into(flex_count)
+            )
+            .map(|v| unsafe {
+                let v = HeapValue::<T>::unchecked_downcast(v);
+                *(v.data().add(size_of::<T>()) as *mut Fixnum) = flex_count;
+                v
+            })
     }
 
     pub unsafe fn push_string(&mut self, s: &str) {
@@ -136,8 +298,6 @@ impl State {
     }
 
     pub unsafe fn cons(&mut self) {
-        debug_assert!(self.stack.len() >= 2);
-
         let mut pair = Pair::new(self).unwrap_or_else(|| {
             self.collect_garbage();
             Pair::new(self).unwrap()
@@ -147,7 +307,7 @@ impl State {
         self.push(pair);
     }
 
-    pub unsafe fn push_vector(&mut self, len: usize) {
+    pub unsafe fn push_vector(&mut self, len: Fixnum) {
         let vec = Vector::new(self, len).unwrap_or_else(|| {
             self.collect_garbage();
             Vector::new(self, len).unwrap()
@@ -155,34 +315,32 @@ impl State {
         self.push(vec);
     }
 
-    pub unsafe fn vector(&mut self, len: usize) {
-        debug_assert!(self.stack.len() >= len);
-
+    pub unsafe fn vector(&mut self, len: Fixnum) {
         let mut vec = Vector::new(self, len).unwrap_or_else(|| {
             self.collect_garbage();
             Vector::new(self, len).unwrap()
         });
+        let len: usize = len.into();
         vec.copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
         self.push(vec)
     }
 
-    pub unsafe fn closure(&mut self, code: Primop, len: usize) {
-        debug_assert!(self.stack.len() >= len);
-
+    pub unsafe fn closure(&mut self, code: Primop, len: Fixnum) {
         let mut f = Closure::new(self, code, len).unwrap_or_else(|| {
             self.collect_garbage();
             Closure::new(self, code, len).unwrap()
         });
+        let len: usize = len.into();
         f.clovers_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
         self.stack.push(f.into())
     }
 
     pub unsafe fn push_primitive(&mut self, code: Primop) {
-        let f = Closure::new(self, code, 0).unwrap_or_else(|| {
+        let f = Closure::new(self, code, 0.into()).unwrap_or_else(|| {
             self.collect_garbage();
-            Closure::new(self, code, 0).unwrap()
+            Closure::new(self, code, 0.into()).unwrap()
         });
         self.push(f);
     }
@@ -195,31 +353,34 @@ impl State {
         let syntax = if let Some(syntax) =
             Syntax::new(self, datum, Value::FALSE, loc.source, line, column)
         {
-            self.pop().unwrap(); // source
-            self.pop().unwrap(); // datum
+            self.pop::<Value>().unwrap().unwrap(); // source
+            self.pop::<Value>().unwrap().unwrap(); // datum
             syntax
         } else {
             self.collect_garbage();
-            let source = self.pop().unwrap();
-            let datum = self.pop().unwrap();
+            let source = self.pop().unwrap().unwrap();
+            let datum = self.pop().unwrap().unwrap();
             Syntax::new(self, datum, Value::FALSE, source, line, column).unwrap()
         };
         self.push(syntax);
         Ok(())
     }
 
-    pub unsafe fn record(&mut self, len: usize) {
-        let mut res = Record::new(self, len).unwrap_or_else(|| {
-            self.collect_garbage();
-            Record::new(self, len).unwrap()
-        });
-        res.slots_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
-        self.stack.truncate(self.stack.len() - len);
-        self.push(res);
-    }
+    /*
+        pub unsafe fn record(&mut self, len: usize) {
+            let mut res = Record::new(self, len).unwrap_or_else(|| {
+                self.collect_garbage();
+                Record::new(self, len).unwrap()
+            });
+            res.slots_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
+            self.stack.truncate(self.stack.len() - len);
+            self.push(res);
+        }
+    */
 
     pub fn get_symbol(&mut self, name: &str) -> Option<Symbol> {
-        self.symbol_table.get(&mut self.heap, name)
+        let symbol_t = self.types().symbol;
+        self.symbol_table.get(&mut self.heap, symbol_t, name)
     }
 
     pub fn push_env(&mut self) { self.push(self.env) }
@@ -237,27 +398,28 @@ impl State {
     }
 
     pub fn lookup(&mut self) -> Result<(), RuntimeError> {
-        let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // checked before call
-        self.env.get(name).map(|v| self.push(v)).ok_or(RuntimeError::Unbound(name))
+        let name = unsafe { Symbol::unchecked_downcast(self.pop().unwrap().unwrap()) }; // checked before call
+        self.env.get(self, name).map(|v| self.push(v)).ok_or(RuntimeError::Unbound(name))
     }
 
-    pub unsafe fn define(&mut self) {
-        let value = self.pop().unwrap();
-        let name = transmute::<Value, Symbol>(self.pop().unwrap()); // its type was checked before pushing it
+    pub unsafe fn define(&mut self) -> Result<(), RuntimeError> {
+        let value = self.pop().unwrap().unwrap();
+        let name = self.pop().unwrap()?;
         self.env.insert(self, name, value).unwrap_or_else(|_| {
             self.push(name);
             self.push(value);
             self.collect_garbage();
-            let value = self.pop().unwrap();
-            let name = transmute::<Value, Symbol>(self.pop().unwrap());
+            let value = self.pop().unwrap().unwrap();
+            let name = self.pop().unwrap().unwrap();
             self.env.insert(self, name, value).unwrap()
         });
+        Ok(())
     }
 
     pub fn set(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop().unwrap();
-        let name = unsafe { transmute::<Value, Symbol>(self.pop().unwrap()) }; // its type was checked before pushing it
-        self.env.set(name, value).map_err(|()| RuntimeError::Unbound(name))?;
+        let value = self.pop().unwrap()?;
+        let name = self.pop().unwrap()?;
+        self.env.set(self, name, value).map_err(|()| RuntimeError::Unbound(name))?;
         Ok(self.stack.push(Value::UNSPECIFIED))
     }
 
@@ -278,13 +440,14 @@ impl State {
             .roots(self.stack.iter_mut().map(|v| v as *mut Value))
             .roots(iter::once(transmute::<&mut Bindings, *mut Value>(&mut self.env)))
             .roots(self.immediate_types.iter_mut().map(|v| v as *mut Value))
+            .roots(self.object_types.indexed.iter_mut().map(|v| v as *mut Value))
             .traverse()
             .weaks(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)));
     }
 
     pub unsafe fn dump<W: io::Write>(&self, dest: &mut W) -> io::Result<()> {
         writeln!(dest, "environment:\n")?;
-        self.env.dump(dest)?;
+        self.env.dump(self, dest)?;
 
         writeln!(dest, "")?;
 
@@ -327,13 +490,18 @@ impl State {
             return ores;
         }
 
-        let include_path = self.get_symbol("*include-path*")?;
-        for dir in Cars::of(self.env.get(include_path)?) {
-            let dir = PgsString::try_from(dir).expect("non-string in *include-path*"); // HACK
+        let include_path_sym = self.get_symbol("*include-path*")?;
+        let mut include_path = self.env.get(self, include_path_sym)?;
+
+        while let Ok(path_pair) = self.downcast::<Pair>(include_path) {
+            let dir =
+                self.downcast::<PgsString>(path_pair.car).expect("non-string in *include-path*"); // HACK
 
             let ores = step(dir.as_ref(), filename);
             if ores.is_some() {
                 return ores;
+            } else {
+                include_path = path_pair.cdr;
             }
         }
 
@@ -369,8 +537,8 @@ impl<'a> Iterator for Frames<'a> {
             let tag = unsafe { transmute::<Value, FrameTag>(self.stack[i]) };
             let (base_len, dynamic) = tag.framesize();
             let len = if dynamic {
-                let dyn_len: usize =
-                    self.stack[i - 2].try_into().expect("Stack frame length corrupted");
+                let dyn_len: usize = todo!();
+                // self.stack[i - 2].try_into().expect("Stack frame length corrupted");
                 base_len + dyn_len + 1
             } else {
                 base_len

@@ -23,6 +23,7 @@ mod util;
 use interpreter::run;
 use lexer::Lexer;
 use parser::Parser;
+use refs::Value;
 use state::State;
 
 const PROMPT: &str = "pegasos> ";
@@ -89,7 +90,8 @@ fn main() {
                 let mut parser = Parser::new(Lexer::new(line.chars()));
                 match unsafe { parser.sexprs(&mut state, "REPL") } {
                     Ok(()) => match run(&mut state) {
-                        Ok(()) => println!("Ack, result: {}", state.pop().unwrap()),
+                        Ok(()) =>
+                            println!("Ack, result: {}", state.pop::<Value>().unwrap().unwrap()),
                         Err(err) => {
                             println!("Runtime error: {}", err);
 

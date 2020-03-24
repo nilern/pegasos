@@ -1,7 +1,7 @@
 use std::cell::UnsafeCell;
 use std::collections::hash_map::RandomState;
-use std::convert::TryFrom;
-use std::fmt::{self, Display, Formatter};
+use std::convert::{TryFrom, TryInto};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
 use std::mem::{self, align_of, size_of, swap, transmute};
@@ -13,61 +13,11 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager, ObjectReference};
-use super::refs::{HeapValue, Primop, UnpackedValue, Value};
+use super::refs::{DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, UnpackedValue, Value};
 use super::state::State;
+use super::util::{False, True};
 
 // ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Hash)]
-pub enum HeapTag {
-    String = 0x0,
-    Symbol = 0x1,
-    Pair = 0x2,
-    Vector = 0x3,
-    Closure = 0x4,
-    Bindings = 0x5,
-    Syntax = 0x6,
-    Record = 0x7,
-    Type = 0x8
-}
-
-impl HeapTag {
-    const FIRST_REFS: usize = Self::Pair as usize;
-
-    fn is_bytes(self) -> bool { (self as usize) < Self::FIRST_REFS }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum BuiltInType {
-    Fixnum,
-    Flonum,
-    Char,
-    Bool,
-    Nil,
-    Unbound,
-    Unspecified,
-    String,
-    Symbol,
-    Pair,
-    Vector,
-    Closure,
-    Bindings,
-    Syntax,
-    Record
-}
-
-impl Display for BuiltInType {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", format!("{:?}", self).to_lowercase())
-    }
-}
-
-// ---
-
-pub trait Heaped {
-    const TYPE: BuiltInType;
-    const TAG: HeapTag;
-}
 
 pub enum UnpackedHeapValue {
     Vector(Vector),
@@ -77,7 +27,6 @@ pub enum UnpackedHeapValue {
     Bindings(Bindings),
     Closure(Closure),
     Syntax(Syntax),
-    Record(Record),
     Type(Type)
 }
 
@@ -85,20 +34,20 @@ impl Display for UnpackedHeapValue {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             UnpackedHeapValue::Vector(vec) => {
-                "#(".fmt(f)?;
+                write!(f, "#(")?;
 
                 for (i, v) in vec.iter().enumerate() {
                     if i > 0 {
-                        " ".fmt(f)?;
+                        write!(f, " ")?;
                     }
-                    v.fmt(f)?;
+                    write!(f, "{}", v)?;
                 }
 
-                ")".fmt(f)
+                write!(f, ")")
             },
-            UnpackedHeapValue::String(s) => s.fmt(f),
-            UnpackedHeapValue::Symbol(s) => s.fmt(f),
-            UnpackedHeapValue::Pair(p) => {
+            UnpackedHeapValue::String(s) => write!(f, "{:?}", s),
+            UnpackedHeapValue::Symbol(s) => write!(f, "{}", s),
+            UnpackedHeapValue::Pair(p) => todo!() /*{
                 write!(f, "({}", p.car)?;
 
                 let mut cars = Cars::of(p.cdr);
@@ -110,101 +59,86 @@ impl Display for UnpackedHeapValue {
                     write!(f, " . {}", cars.remainder())?;
                 }
 
-                ")".fmt(f)
-            },
-            UnpackedHeapValue::Bindings(_) => "#<environment>".fmt(f),
-            UnpackedHeapValue::Closure(_) => "#<procedure>".fmt(f),
+                write!(f, ")")
+            }*/,
+            UnpackedHeapValue::Bindings(_) => write!(f, "#<environment>"),
+            UnpackedHeapValue::Closure(_) => write!(f, "#<procedure>"),
             UnpackedHeapValue::Syntax(so) =>
                 write!(f, "#<syntax @ {}:{}:{} {}>", so.source, so.line, so.column, so.datum),
-            UnpackedHeapValue::Record(record) => write!(f, "#<record {}>", record.typ.name),
-            UnpackedHeapValue::Type(t) => write!(f, "#<type {} {}>", t.name, Value::from(t.fields))
+            UnpackedHeapValue::Type(t) => write!(f, "{}", t)
         }
     }
 }
 
 // ---
 
-#[derive(Clone, Copy)]
-pub struct Header(usize);
-
-impl Header {
-    const TYPE_SHIFT: usize = 4;
-    const TYPE_MASK: usize = 0b1111;
-    const SIZE_SHIFT: usize = 8;
-
-    const MARK_BIT: usize = 0b10;
-    const BYTES_BIT: usize = 0b100;
-
-    pub fn new(type_tag: HeapTag, len: usize) -> Self {
-        // FIXME: Check that `len` fits in 24 / 56 bits
-        Self(
-            len << Self::SIZE_SHIFT
-                | (type_tag as usize) << Self::TYPE_SHIFT
-                // Bit 2 is unused ATM
-                | (type_tag.is_bytes() as usize) << 2
-                | 0b01 // always set for `is_alignment_hole`
-        )
-    }
-
-    fn is_alignment_hole(mem: *const Self) -> bool { unsafe { (*mem).0 == 0 } }
-
-    fn len(&self) -> usize { self.0 >> Self::SIZE_SHIFT }
-
-    fn size(&self) -> usize {
-        let len = self.len();
-        if self.is_bytes() {
-            len
-        } else {
-            len * size_of::<Value>()
-        }
-    }
-
-    fn tag(&self) -> HeapTag {
-        unsafe { transmute((self.0 >> Self::TYPE_SHIFT & Self::TYPE_MASK) as u8) }
-    }
-
-    fn is_bytes(&self) -> bool { self.0 & Self::BYTES_BIT == Self::BYTES_BIT }
-
-    fn mark(&mut self) { *self = Self(self.0 | Self::MARK_BIT); }
-
-    fn is_marked(&self) -> bool { self.0 & Self::MARK_BIT != 0 }
-}
-
-// ---
-
-#[derive(Clone, Copy)]
-pub struct Object {
-    identity_hash: usize,
-    header: Header
-}
+#[derive(Debug, Clone, Copy)]
+pub struct Header(Value);
 
 // FIXME: Actually VM local, move to State
 thread_local! {
     static IDENTITY_HASHES: UnsafeCell<SmallRng> = UnsafeCell::new(SmallRng::from_entropy());
 }
 
-impl Object {
-    pub fn new(header: Header) -> Self { Self { identity_hash: 0, header } }
+impl Header {
+    const BAD_HASH: usize = 0xf0;
 
-    pub fn tag(&self) -> HeapTag { self.header.tag() }
+    fn new() -> Self { Self(unsafe { transmute::<usize, Value>(Self::BAD_HASH) }) }
 
-    pub fn is_bytes(&self) -> bool { self.header.is_bytes() }
+    fn from_hash(hash: usize) -> Self { Self(Value::try_from(hash).unwrap()) }
 
-    pub fn len(&self) -> usize { self.header.len() }
-
-    pub fn identity_hash(&mut self) -> usize {
-        let mut hash = self.identity_hash;
-
-        if hash != 0 {
-            hash
+    fn identity_hash(&mut self) -> usize {
+        if self.0 != unsafe { transmute::<usize, Value>(Self::BAD_HASH) } {
+            unsafe { Fixnum::unchecked_downcast(self.0).into() }
         } else {
-            hash = IDENTITY_HASHES.with(|id_hashes| unsafe { (*id_hashes.get()).gen() });
-            if hash == 0 {
-                hash = 0xbad;
+            let mut hash = IDENTITY_HASHES.with(|id_hashes| unsafe { (*id_hashes.get()).gen() });
+            hash = hash << Value::SHIFT;
+
+            if hash == Self::BAD_HASH {
+                hash = 0xbad0;
             }
-            self.identity_hash = hash;
+            self.0 = unsafe { transmute::<usize, Value>(hash) };
             hash
         }
+    }
+
+    fn forward(&mut self, data: *const u8) { self.0 = unsafe { Value::from_ptr(data as *mut u8) }; }
+
+    fn forwarded(self) -> Option<Value> { HeapValue::<()>::try_from(self.0).ok().map(Value::from) }
+}
+
+// ---
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct Object {
+    header: Header,
+    typ: Type
+}
+
+impl Object {
+    pub fn new(typ: Type) -> Self { Self { header: Header::new(), typ } }
+
+    pub fn is_bytes(&self) -> bool { self.typ.is_bytes != Value::FALSE }
+
+    pub fn typ(&self) -> Type { self.typ }
+
+    pub fn len(&self) -> usize { self.typ.instance_len(self) }
+
+    pub fn identity_hash(&mut self) -> usize { self.header.identity_hash() }
+
+    unsafe fn flex_slots(&self) -> &[Value] { self.typ.instance_flex_slots(self) }
+
+    unsafe fn flex_slots_mut(&mut self) -> &mut [Value] {
+        let typ = self.typ;
+        typ.instance_flex_slots_mut(self)
+    }
+
+    unsafe fn flex_bytes(&self) -> &[u8] { self.typ.instance_flex_bytes(self) }
+
+    unsafe fn flex_bytes_mut(&mut self) -> &mut [u8] {
+        let typ = self.typ;
+        typ.instance_flex_bytes_mut(self)
     }
 }
 
@@ -215,22 +149,14 @@ impl HeapObject for Object {
     const LAPSED: Self::Ref = Value::UNBOUND;
 
     fn is_alignment_hole(mem: *const Self) -> bool {
-        Header::is_alignment_hole(unsafe { &(*mem).header })
+        unsafe { transmute::<Type, usize>((*mem).typ) == 0 }
     }
 
-    fn forward(&mut self, data: *const u8) {
-        self.identity_hash = data as usize;
-        self.header.mark();
-    }
-    fn forwarded(&self) -> Option<Self::Ref> {
-        if self.header.is_marked() {
-            Some(unsafe { Self::Ref::from_ptr(self.identity_hash as *mut u8) })
-        } else {
-            None
-        }
-    }
+    fn forward(&mut self, data: *const u8) { self.header.forward(data) }
 
-    fn size(&self) -> usize { self.header.size() }
+    fn forwarded(&self) -> Option<Self::Ref> { self.header.forwarded() }
+
+    fn size(&self) -> usize { self.typ.instance_size(self) }
     fn align(&self) -> usize { align_of::<Value>() }
 
     fn data(&mut self) -> *mut u8 { (unsafe { (self as *mut Self).offset(1) }) as *mut u8 }
@@ -245,8 +171,13 @@ pub struct PtrFields {
 
 impl PtrFields {
     fn new(obj: *mut Object) -> Self {
-        let obj = unsafe { &mut *obj };
-        Self { ptr: obj.data() as *mut Value, len: if obj.is_bytes() { 0 } else { obj.len() } }
+        unsafe {
+            Self {
+                // Type is also a pointer field
+                ptr: ((*obj).data() as *mut Value).offset(-1),
+                len: if (*obj).is_bytes() { 1 } else { (*obj).len() + 1 }
+            }
+        }
     }
 }
 
@@ -269,33 +200,31 @@ impl Iterator for PtrFields {
 
 pub type Vector = HeapValue<VectorData>;
 
-#[repr(C)]
-pub struct VectorData {
-    items: [Value]
+impl DynamicType for VectorData {
+    type IsBytes = False;
+    type IsFlex = True;
+
+    fn reify(state: &State) -> Type { state.types().vector }
 }
 
-impl Heaped for VectorData {
-    const TYPE: BuiltInType = BuiltInType::Vector;
-    const TAG: HeapTag = HeapTag::Vector;
-}
+#[repr(C)]
+pub struct VectorData;
 
 impl Vector {
-    pub fn new(state: &mut State, len: usize) -> Option<Self> {
-        state.alloc(Object::new(Header::new(HeapTag::Vector, len)))
+    pub fn new(state: &mut State, len: Fixnum) -> Option<Self> {
+        state.alloc_flex::<VectorData>(len)
     }
 }
 
 impl Deref for Vector {
     type Target = [Value];
 
-    fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.data() as *const Value, (*self.as_ptr()).len()) }
-    }
+    fn deref(&self) -> &Self::Target { unsafe { (*self.header()).flex_slots() } }
 }
 
 impl DerefMut for Vector {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.data() as *mut Value, (*self.as_ptr()).len()) }
+        unsafe { (*self.header_mut()).flex_slots_mut() }
     }
 }
 
@@ -303,22 +232,21 @@ impl DerefMut for Vector {
 
 pub type PgsString = HeapValue<PgsStringData>;
 
-#[repr(C)]
-pub struct PgsStringData {
-    chars: str
+impl DynamicType for PgsStringData {
+    type IsBytes = True;
+    type IsFlex = True;
+
+    fn reify(state: &State) -> Type { state.types().string }
 }
 
-impl Heaped for PgsStringData {
-    const TYPE: BuiltInType = BuiltInType::String;
-    const TAG: HeapTag = HeapTag::String;
-}
+#[repr(C)]
+pub struct PgsStringData;
 
 impl PgsString {
     pub fn new(state: &mut State, cs: &str) -> Option<Self> {
         let len = cs.len();
-        state.alloc::<PgsStringData>(Object::new(Header::new(HeapTag::String, len))).map(|res| {
-            let data = unsafe { slice::from_raw_parts_mut(res.data(), len) };
-            data.copy_from_slice(cs.as_bytes());
+        state.alloc_flex::<PgsStringData>(len.try_into().unwrap()).map(|res| {
+            unsafe { (*res.header_mut()).flex_bytes_mut().copy_from_slice(cs.as_bytes()) };
             res
         })
     }
@@ -326,10 +254,7 @@ impl PgsString {
 
 impl PgsString {
     pub fn as_str(&self) -> &str {
-        unsafe {
-            let bytes = slice::from_raw_parts(self.data(), (*self.as_ptr()).len());
-            str::from_utf8_unchecked(bytes)
-        }
+        unsafe { str::from_utf8_unchecked((*self.header()).flex_bytes()) }
     }
 }
 
@@ -337,6 +262,10 @@ impl Deref for PgsString {
     type Target = str;
 
     fn deref(&self) -> &Self::Target { self.as_str() }
+}
+
+impl Debug for PgsString {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{:?}", self.as_str()) }
 }
 
 impl Display for PgsString {
@@ -351,28 +280,43 @@ pub struct SymbolData {
     pub hash: u64
 }
 
-impl Heaped for SymbolData {
-    const TYPE: BuiltInType = BuiltInType::Symbol;
-    const TAG: HeapTag = HeapTag::Symbol;
+pub type Symbol = HeapValue<SymbolData>;
+
+impl DynamicType for SymbolData {
+    type IsBytes = True;
+    type IsFlex = True;
+
+    fn reify(state: &State) -> Type { state.types().symbol }
 }
 
-pub type Symbol = HeapValue<SymbolData>;
+impl Deref for Symbol {
+    type Target = SymbolData;
+
+    fn deref(&self) -> &Self::Target { unsafe { &*(self.data() as *const Self::Target) } }
+}
+
+impl DerefMut for Symbol {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self.data() as *mut Self::Target) }
+    }
+}
 
 impl Symbol {
     pub fn new(state: &mut State, name: &str) -> Option<Self> { state.get_symbol(name) }
 
-    fn create(heap: &mut MemoryManager<Object>, hash: u64, name: &str) -> Option<Self> {
-        let len = size_of::<SymbolData>() + name.len();
-        heap.alloc(Object::new(Header::new(HeapTag::Symbol, len))).map(|res| {
-            let mut res = unsafe { transmute::<Value, HeapValue<SymbolData>>(res) };
-
+    fn create(
+        heap: &mut MemoryManager<Object>, symbol_t: Type, hash: u64, name: &str
+    ) -> Option<Self> {
+        heap.alloc(
+            Object::new(symbol_t),
+            size_of::<SymbolData>() + size_of::<Fixnum>() + name.len()
+        )
+        .map(|res| unsafe {
+            let mut res = Symbol::unchecked_downcast(res);
             res.hash = hash;
-            let data = unsafe {
-                let ptr = ((&mut *res) as *mut SymbolData).add(1) as *mut u8;
-                slice::from_raw_parts_mut(ptr, name.len())
-            };
-            data.copy_from_slice(name.as_bytes());
-
+            *((&mut *res as *mut SymbolData).add(1) as *mut Fixnum) =
+                name.len().try_into().unwrap();
+            (*res.header_mut()).flex_bytes_mut().copy_from_slice(name.as_bytes());
             res
         })
     }
@@ -380,13 +324,7 @@ impl Symbol {
 
 impl Symbol {
     pub fn as_str(&self) -> &str {
-        unsafe {
-            let bytes = slice::from_raw_parts(
-                self.data().add(size_of::<SymbolData>()),
-                (*self.as_ptr()).len() - size_of::<SymbolData>()
-            );
-            str::from_utf8_unchecked(bytes)
-        }
+        unsafe { str::from_utf8_unchecked((*self.header()).flex_bytes()) }
     }
 }
 
@@ -406,14 +344,16 @@ impl SymbolTable {
 
     /// Only returns `None` if symbol was not found and then allocating it
     /// failed.
-    pub fn get(&mut self, heap: &mut MemoryManager<Object>, name: &str) -> Option<Symbol> {
+    pub fn get(
+        &mut self, heap: &mut MemoryManager<Object>, symbol_t: Type, name: &str
+    ) -> Option<Symbol> {
         self.ensure_vacancy();
 
         let hash = self.hash_key(name);
 
         match self.locate(name, hash) {
             Ok(symbol) => Some(symbol),
-            Err(vacancy) => Symbol::create(heap, hash, name).map(|symbol| {
+            Err(vacancy) => Symbol::create(heap, symbol_t, hash, name).map(|symbol| {
                 self.symbols[vacancy] = symbol.into();
                 self.occupancy += 1;
                 symbol
@@ -421,13 +361,11 @@ impl SymbolTable {
         }
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Symbol> {
-        self.symbols.iter_mut().filter_map(|v| {
-            if let Ok(_) = Symbol::try_from(*v) {
-                Some(unsafe { transmute::<&mut Value, &mut Symbol>(v) })
-            } else {
-                None
-            }
+    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut Symbol> {
+        self.symbols.iter_mut().filter_map(|v| match *v {
+            Self::TOMBSTONE => None,
+            Self::VACANT => None,
+            _ => Some(unsafe { transmute::<&mut Value, &mut Symbol>(v) })
         })
     }
 
@@ -441,7 +379,7 @@ impl SymbolTable {
                 Self::TOMBSTONE => {},
                 Self::VACANT => return Err(i),
                 symbol => {
-                    let symbol = unsafe { transmute::<Value, Symbol>(symbol) };
+                    let symbol = unsafe { Symbol::unchecked_downcast(symbol) };
                     if symbol.hash == hash && symbol.as_str() == k {
                         return Ok(symbol);
                     }
@@ -486,7 +424,7 @@ impl SymbolTable {
             match v {
                 Self::TOMBSTONE => self.occupancy -= 1,
                 Self::VACANT => {},
-                symbol => insert(self, unsafe { transmute::<Value, Symbol>(symbol) })
+                symbol => insert(self, unsafe { Symbol::unchecked_downcast(symbol) })
             }
         }
     }
@@ -498,13 +436,24 @@ impl SymbolTable {
     }
 }
 
+impl Debug for Symbol {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}", self.as_str()) }
+}
+
 impl Display for Symbol {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.as_str().fmt(f) }
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}", self.as_str()) }
 }
 
 // ---
 
 pub type Pair = HeapValue<PairData>;
+
+impl DynamicType for PairData {
+    type IsBytes = False;
+    type IsFlex = False;
+
+    fn reify(state: &State) -> Type { state.types().pair }
+}
 
 #[repr(C)]
 pub struct PairData {
@@ -512,130 +461,98 @@ pub struct PairData {
     pub cdr: Value
 }
 
-impl Heaped for PairData {
-    const TYPE: BuiltInType = BuiltInType::Pair;
-    const TAG: HeapTag = HeapTag::Pair;
-}
-
 impl Pair {
-    pub fn new(state: &mut State) -> Option<Self> {
-        state.alloc(Object::new(Header::new(
-            HeapTag::Pair,
-            size_of::<PairData>() / size_of::<Value>()
-        )))
-    }
-}
-
-pub struct Cars(Value);
-
-impl Cars {
-    pub fn of(value: Value) -> Self { Self(value) }
-
-    pub fn remainder(&self) -> Value { self.0 }
-}
-
-impl Iterator for Cars {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Ok(pair) = Pair::try_from(self.0) {
-            self.0 = pair.cdr;
-            Some(pair.car)
-        } else {
-            None
-        }
-    }
+    pub fn new(state: &mut State) -> Option<Self> { state.alloc::<PairData>() }
 }
 
 // ---
+
+pub type Closure = HeapValue<ClosureData>;
+
+impl DynamicType for ClosureData {
+    type IsBytes = False;
+    type IsFlex = True;
+
+    fn reify(state: &State) -> Type { state.types().procedure }
+}
+
+impl Deref for Closure {
+    type Target = ClosureData;
+
+    fn deref(&self) -> &Self::Target { unsafe { &*(self.data() as *const Self::Target) } }
+}
+
+impl DerefMut for Closure {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self.data() as *mut Self::Target) }
+    }
+}
 
 #[repr(C)]
 pub struct ClosureData {
     pub code: Primop
 }
 
-impl Heaped for ClosureData {
-    const TYPE: BuiltInType = BuiltInType::Closure;
-    const TAG: HeapTag = HeapTag::Closure;
-}
-
-pub type Closure = HeapValue<ClosureData>;
-
 impl Closure {
-    pub fn new(state: &mut State, code: Primop, clover_count: usize) -> Option<Self> {
-        let len = clover_count + 1;
-        state.alloc::<ClosureData>(Object::new(Header::new(HeapTag::Closure, len))).map(
-            |mut res| {
-                res.code = code;
-                res
-            }
-        )
+    pub fn new(state: &mut State, code: Primop, clover_count: Fixnum) -> Option<Self> {
+        state.alloc_flex::<ClosureData>(clover_count).map(|mut res| {
+            res.code = code;
+            res
+        })
     }
 }
 
 impl Closure {
-    pub fn clovers(&self) -> &[Value] {
-        unsafe {
-            slice::from_raw_parts((self.data() as *const Value).add(1), (*self.as_ptr()).len() - 1)
-        }
-    }
+    pub fn clovers(&self) -> &[Value] { unsafe { (*self.header()).flex_slots() } }
 
     pub fn clovers_mut(&mut self) -> &mut [Value] {
-        unsafe {
-            slice::from_raw_parts_mut(
-                (self.data() as *mut Value).add(1),
-                (*self.as_ptr()).len() - 1
-            )
-        }
+        unsafe { (*self.header_mut()).flex_slots_mut() }
     }
 }
 
 // ---
+
+pub type Bindings = HeapValue<BindingsData>;
+
+impl DynamicType for BindingsData {
+    type IsBytes = False;
+    type IsFlex = False;
+
+    fn reify(state: &State) -> Type { state.types().environment }
+}
 
 #[repr(C)]
 pub struct BindingsData {
     parent: Value,
     keys: Vector,
     values: Vector,
-    occupancy: Value
+    occupancy: Fixnum
 }
-
-impl Heaped for BindingsData {
-    const TYPE: BuiltInType = BuiltInType::Bindings;
-    const TAG: HeapTag = HeapTag::Bindings;
-}
-
-pub type Bindings = HeapValue<BindingsData>;
 
 impl Bindings {
     pub fn new(state: &mut State, parent: Option<Bindings>) -> Option<Bindings> {
-        state
-            .alloc::<BindingsData>(Object::new(Header::new(
-                HeapTag::Bindings,
-                size_of::<BindingsData>() / size_of::<Value>()
-            )))
-            .and_then(|mut bindings| {
-                Vector::new(state, 2).and_then(|keys| {
-                    Vector::new(state, 2).map(|values| {
-                        bindings.parent = parent.map_or(Value::FALSE, Value::from);
-                        bindings.keys = keys; // keys are already VACANT (= 0) initialized
-                        bindings.values = values;
-                        // occupancy is already 0
-                        bindings
-                    })
+        state.alloc::<BindingsData>().and_then(|mut bindings| {
+            Vector::new(state, 2.into()).and_then(|keys| {
+                Vector::new(state, 2.into()).map(|values| {
+                    bindings.parent = parent.map_or(Value::FALSE, Value::from);
+                    bindings.keys = keys; // keys are already VACANT (= 0) initialized
+                    bindings.values = values;
+                    // occupancy is already 0
+                    bindings
                 })
             })
+        })
     }
 
     const VACANT: Value = Value::ZERO;
 
-    pub fn get(self, name: Symbol) -> Option<Value> {
+    pub fn get(self, state: &State, name: Symbol) -> Option<Value> {
         let mut this = self;
         loop {
             match this.locate(name) {
                 (i, true) => return Some(this.values[i]),
                 (_, false) =>
-                    if let Ok(parent) = Bindings::try_from(this.parent) {
+                    if let Ok(parent) = state.downcast::<Bindings>(this.parent) {
                         this = parent;
                     } else {
                         return None;
@@ -650,7 +567,7 @@ impl Bindings {
     }
 
     // Returns `Err` if not found.
-    pub fn set(self, name: Symbol, value: Value) -> Result<(), ()> {
+    pub fn set(self, state: &State, name: Symbol, value: Value) -> Result<(), ()> {
         let mut this = self;
         loop {
             match this.locate(name) {
@@ -659,7 +576,7 @@ impl Bindings {
                     return Ok(());
                 },
                 (_, false) =>
-                    if let Ok(parent) = Bindings::try_from(this.parent) {
+                    if let Ok(parent) = state.downcast::<Bindings>(this.parent) {
                         this = parent;
                     } else {
                         return Err(());
@@ -672,11 +589,7 @@ impl Bindings {
         let (i, _) = self.locate(name);
         self.keys[i] = name.into();
         self.values[i] = value;
-        unsafe {
-            self.occupancy = transmute::<usize, Value>(
-                transmute::<Value, usize>(self.occupancy) + (1 << Value::SHIFT)
-            );
-        }
+        self.occupancy = (self.occupancy + Fixnum::from(1)).unwrap();
     }
 
     fn locate(self, name: Symbol) -> (usize, bool) {
@@ -698,9 +611,7 @@ impl Bindings {
     }
 
     fn ensure_vacancy(self, state: &mut State) -> Option<()> {
-        if unsafe { transmute::<Value, usize>(self.occupancy) >> Value::SHIFT } + 1
-            > self.capacity() / 2
-        {
+        if <Fixnum as Into<usize>>::into(self.occupancy) + 1 > self.capacity() / 2 {
             self.rehash(state)
         } else {
             Some(())
@@ -708,7 +619,7 @@ impl Bindings {
     }
 
     fn rehash(mut self, state: &mut State) -> Option<()> {
-        let len = 2 * self.keys.len();
+        let len = (2 * self.keys.len()).try_into().unwrap();
 
         Vector::new(state, len).and_then(|mut keys| {
             Vector::new(state, len).map(|mut values| {
@@ -718,7 +629,8 @@ impl Bindings {
                 for (i, &key) in keys.iter().enumerate() {
                     match key {
                         Self::VACANT => {},
-                        name => self.insert_noresize(unsafe { transmute(name) }, values[i])
+                        name => self
+                            .insert_noresize(unsafe { Symbol::unchecked_downcast(name) }, values[i])
                     }
                 }
             })
@@ -727,9 +639,9 @@ impl Bindings {
 
     fn capacity(self) -> usize { self.keys.len() }
 
-    pub fn dump<W: io::Write>(self, dest: &mut W) -> io::Result<()> {
-        if let Ok(parent) = Bindings::try_from(self.parent) {
-            parent.dump(dest)?;
+    pub fn dump<W: io::Write>(self, state: &State, dest: &mut W) -> io::Result<()> {
+        if let Ok(parent) = state.downcast::<Bindings>(self.parent) {
+            parent.dump(state, dest)?;
         }
 
         for (k, v) in self.keys.iter().zip(self.values.iter()) {
@@ -746,6 +658,13 @@ impl Bindings {
 
 pub type Syntax = HeapValue<SyntaxObject>;
 
+impl DynamicType for SyntaxObject {
+    type IsBytes = False;
+    type IsFlex = False;
+
+    fn reify(state: &State) -> Type { state.types().syntax }
+}
+
 #[repr(C)]
 pub struct SyntaxObject {
     pub datum: Value,
@@ -755,28 +674,18 @@ pub struct SyntaxObject {
     pub column: Value
 }
 
-impl Heaped for SyntaxObject {
-    const TYPE: BuiltInType = BuiltInType::Syntax;
-    const TAG: HeapTag = HeapTag::Syntax;
-}
-
 impl Syntax {
     pub fn new(
         state: &mut State, datum: Value, scopes: Value, source: Value, line: Value, column: Value
     ) -> Option<Self> {
-        state
-            .alloc::<SyntaxObject>(Object::new(Header::new(
-                HeapTag::Syntax,
-                size_of::<SyntaxObject>() / size_of::<Value>()
-            )))
-            .map(|mut syn| {
-                syn.datum = datum;
-                syn.scopes = scopes;
-                syn.source = source;
-                syn.line = line;
-                syn.column = column;
-                syn
-            })
+        state.alloc::<SyntaxObject>().map(|mut syn| {
+            syn.datum = datum;
+            syn.scopes = scopes;
+            syn.source = source;
+            syn.line = line;
+            syn.column = column;
+            syn
+        })
     }
 }
 
@@ -784,7 +693,7 @@ impl Value {
     /// `syntax->datum`
     pub unsafe fn to_datum(self, state: &mut State) -> Value {
         match self.unpack() {
-            UnpackedValue::ORef(o) => match o.unpack() {
+            UnpackedValue::ORef(o) => match o.unpack(state) {
                 UnpackedHeapValue::Syntax(syntax) => syntax.datum.to_datum(state),
                 UnpackedHeapValue::Pair(pair) => {
                     state.push(pair);
@@ -794,7 +703,7 @@ impl Value {
                     let cdr = pair.cdr.to_datum(state);
                     state.push(cdr);
                     state.cons();
-                    state.pop().unwrap()
+                    state.pop().unwrap().unwrap()
                 },
                 UnpackedHeapValue::Vector(vec) => {
                     let len = vec.len();
@@ -806,9 +715,9 @@ impl Value {
                         state.push(v);
                     } // { vec v{len} }
 
-                    state.vector(len); // { vec vec* }
+                    state.vector(transmute::<usize, Fixnum>(len << Value::SHIFT)); // { vec vec* }
                     state.remove(1).unwrap();
-                    state.pop().unwrap()
+                    state.pop().unwrap().unwrap()
                 },
                 _ => self
             },
@@ -817,52 +726,196 @@ impl Value {
     }
 }
 
-// ---
-
-pub type Type = HeapValue<TypeData>;
-
-#[repr(C)]
-pub struct TypeData {
-    pub parent: Value,
-    pub name: Symbol,
-    pub fields: Vector
-}
-
-impl Type {
-    pub fn new(
-        state: &mut State, parent: Option<Value>, name: Symbol, fields: Vector
-    ) -> Option<Self> {
-        state
-            .alloc::<TypeData>(Object::new(Header::new(
-                HeapTag::Type,
-                size_of::<TypeData>() / size_of::<Value>()
-            )))
-            .map(|mut res| {
-                res.parent = parent.unwrap_or(Value::FALSE);
-                res.name = name;
-                res.fields = fields;
-                res
-            })
+impl Display for FieldDescriptor {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let mutability = if self.is_mutable == Value::TRUE { "mutable" } else { "immutable" };
+        write!(f, "({} {} {})", mutability, self.name, self.size)
     }
 }
 
 // ---
 
-pub type Record = HeapValue<RecordData>;
+pub type Type = HeapValue<TypeData>;
+
+impl DynamicType for TypeData {
+    type IsBytes = False;
+    type IsFlex = True;
+
+    fn reify(state: &State) -> Type { state.types().typ }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct TypeData {
+    pub is_bytes: Value,
+    pub is_flex: Value,
+    pub name: Symbol,
+    pub parent: Value,
+    pub min_size: Fixnum
+}
+
+impl Type {
+    pub fn new(
+        state: &mut State, is_bytes: bool, is_flex: bool, name: Symbol, parent: Option<Value>,
+        min_size: Fixnum, fields: &[FieldDescriptor]
+    ) -> Option<Self> {
+        state.alloc_flex::<TypeData>(fields.len().try_into().unwrap()).map(|mut res| {
+            res.is_bytes = is_bytes.into();
+            res.is_flex = is_flex.into();
+            res.name = name;
+            res.parent = parent.unwrap_or(Value::FALSE);
+            res.min_size = min_size;
+            res.fields_mut().copy_from_slice(fields);
+            res
+        })
+    }
+}
+
+impl TypeData {
+    fn field_count(&self) -> usize {
+        unsafe { (*((self as *const TypeData).add(1) as *const Fixnum)).into() }
+    }
+
+    fn fields(&self) -> &[FieldDescriptor] {
+        unsafe {
+            let len_ptr = (self as *const TypeData).add(1) as *const Fixnum;
+            slice::from_raw_parts(len_ptr.add(1) as *const FieldDescriptor, (*len_ptr).into())
+        }
+    }
+
+    fn fields_mut(&mut self) -> &mut [FieldDescriptor] {
+        unsafe {
+            let len_ptr = (self as *mut TypeData).add(1) as *mut Fixnum;
+            slice::from_raw_parts_mut(len_ptr.add(1) as *mut FieldDescriptor, (*len_ptr).into())
+        }
+    }
+
+    // TODO: Figure out bytes instances with fixed fields
+    fn instance_len(&self, instance: &Object) -> usize {
+        let min_len = self.field_count();
+
+        if self.is_flex != Value::FALSE {
+            let flex_len: usize = unsafe {
+                (*((instance as *const Object).add(1) as *const Fixnum).add(min_len - 1)).into()
+            };
+            min_len + flex_len
+        } else {
+            min_len
+        }
+    }
+
+    // TODO: Figure out bytes instances with fixed fields
+    fn instance_size(&self, instance: &Object) -> usize {
+        if self.is_flex != Value::FALSE {
+            let min_size: usize = self.min_size.into();
+
+            let flex_len: usize = unsafe {
+                (*(((instance as *const Object).add(1) as *const u8)
+                    .add(min_size - size_of::<Fixnum>()) as *const Fixnum))
+                    .into()
+            };
+            let flex_size = if self.is_bytes != Value::FALSE {
+                flex_len
+            } else {
+                flex_len * size_of::<Value>()
+            };
+
+            min_size + flex_size
+        } else {
+            self.min_size.into()
+        }
+    }
+
+    unsafe fn instance_flex_len(&self, instance: &Object) -> usize {
+        (*(((instance as *const Object).add(1) as *const u8)
+            .add(<Fixnum as Into<usize>>::into(self.min_size) - size_of::<Fixnum>())
+            as *const Fixnum))
+            .into()
+    }
+
+    unsafe fn instance_flex_ptr(&self, instance: &Object) -> *const u8 {
+        ((instance as *const Object).add(1) as *const u8)
+            .add(<Fixnum as Into<usize>>::into(self.min_size))
+    }
+
+    unsafe fn instance_flex_slots(&self, instance: &Object) -> &[Value] {
+        slice::from_raw_parts(
+            self.instance_flex_ptr(instance) as *const Value,
+            self.instance_flex_len(instance)
+        )
+    }
+
+    unsafe fn instance_flex_slots_mut<'a>(&self, instance: &'a mut Object) -> &'a mut [Value] {
+        slice::from_raw_parts_mut(
+            self.instance_flex_ptr(instance) as *mut Value,
+            self.instance_flex_len(instance)
+        )
+    }
+
+    unsafe fn instance_flex_bytes(&self, instance: &Object) -> &[u8] {
+        slice::from_raw_parts(self.instance_flex_ptr(instance), self.instance_flex_len(instance))
+    }
+
+    unsafe fn instance_flex_bytes_mut<'a>(&self, instance: &'a mut Object) -> &'a mut [u8] {
+        slice::from_raw_parts_mut(
+            self.instance_flex_ptr(instance) as *mut u8,
+            self.instance_flex_len(instance)
+        )
+    }
+}
+
+impl Deref for Type {
+    type Target = TypeData;
+
+    fn deref(&self) -> &Self::Target { unsafe { &*(self.data() as *const Self::Target) } }
+}
+
+impl DerefMut for Type {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self.data() as *mut Self::Target) }
+    }
+}
+
+impl Debug for Type {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}", self) }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "#<type {}", self.name)?;
+
+        for field in self.fields() {
+            write!(f, " {}", field)?;
+        }
+
+        write!(f, ">")
+    }
+}
+
+// ---
+
+pub type FieldDescriptor = HeapValue<FieldDescriptorData>;
 
 #[repr(C)]
-pub struct RecordData {
-    pub typ: Type
+pub struct FieldDescriptorData {
+    pub is_mutable: Value,
+    pub size: Fixnum,
+    pub name: Symbol
 }
 
-impl Heaped for RecordData {
-    const TYPE: BuiltInType = BuiltInType::Record;
-    const TAG: HeapTag = HeapTag::Record;
+impl DynamicType for FieldDescriptorData {
+    type IsBytes = False;
+    type IsFlex = False;
+
+    fn reify(state: &State) -> Type { state.types().field_descriptor }
 }
 
-impl Record {
-    pub fn new(state: &mut State, len: usize) -> Option<Self> {
-        state.alloc::<RecordData>(Object::new(Header::new(HeapTag::Record, len)))
+impl FieldDescriptor {
+    fn new(state: &mut State, is_mutable: bool, size: Fixnum, name: Symbol) -> Option<Self> {
+        state.alloc::<FieldDescriptorData>().map(|mut res| {
+            *res = FieldDescriptorData { is_mutable: is_mutable.into(), size, name };
+            res
+        })
     }
 }
 

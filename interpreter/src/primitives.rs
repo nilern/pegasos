@@ -1,11 +1,10 @@
 use std::convert::{TryFrom, TryInto};
 use std::mem::transmute;
-use std::ptr;
 
 use super::error::PgsError;
 use super::interpreter::{Op, RuntimeError};
-use super::objects::{Cars, Closure, Pair, Symbol, Syntax, Type, Vector};
-use super::refs::{FrameTag, HeapValue, Primop, Tag, Value};
+use super::objects::{Closure, Pair, Symbol, Syntax, Type, Vector};
+use super::refs::{DynamicDowncast, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
 use super::state::State;
 
 pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
@@ -21,7 +20,6 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         Values => values(state),
         SymbolHash => symbol_hash(state),
         ImmediateTypeIndex => immediate_tag(state),
-        HeapTypeIndex => heap_tag(state),
         Length => object_length(state),
         SlotRef => slot_ref(state),
         SlotSet => slot_set(state),
@@ -30,7 +28,6 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         Car => car(state),
         Cdr => cdr(state),
         MakeVector => make_vector(state),
-        VectorCopy => vector_copy(state),
         FxLt => fx_lt(state),
         FxAdd => fx_add(state),
         FxSub => fx_sub(state),
@@ -38,7 +35,7 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         BitwiseAnd => bitwise_and(state),
         BitwiseIor => bitwise_ior(state),
         BitwiseXor => bitwise_xor(state),
-        ArithmeticShift => arithmetic_shift(state),
+        FxArithmeticShift => fx_arithmetic_shift(state),
         BitCount => bit_count(state),
         MakeSyntax => make_syntax(state),
         MakeType => make_type(state),
@@ -54,28 +51,10 @@ macro_rules! count {
 
 macro_rules! pop_params {
     ($state:ident) => {};
-    ($state:ident, $param:ident) => {let $param = $state.pop().unwrap();};
-    ($state:ident, $param:ident, $($params:ident),*) => {
-        pop_params!($state, $($params),*);
-        let $param = $state.pop().unwrap();
-    };
-}
-
-macro_rules! checked_primitive_body {
-    (() $body:block) => {$body};
-    (($param:ident : $typ:ty) $body:block) => {
-        if let Ok($param) = <Value as TryInto<$typ>>::try_into($param) {
-            checked_primitive_body!(() $body)
-        } else {
-            unimplemented!()
-        }
-    };
-    (($param:ident : $typ:ty, $($params:ident : $typs:ty),*) $body:block) => {
-        if let Ok($param) = <Value as TryInto<$typ>>::try_into($param) {
-            checked_primitive_body!(($($params : $typs),*) $body)
-        } else {
-            unimplemented!()
-        }
+    ($state:ident, $param:ident : $typ:ty) => {let $param = $state.pop::<$typ>().unwrap()?;};
+    ($state:ident, $param:ident : $typ:ty, $($params:ident : $typs:ty),*) => {
+        pop_params!($state, $($params : $typs),*);
+        let $param = $state.pop::<$typ>().unwrap()?;
     };
 }
 
@@ -83,12 +62,12 @@ macro_rules! primitive {
     ($name:ident $state:ident ($($params:ident : $typs:ty),*) $body:block) => {
         fn $name($state: &mut State) -> Result<Op, PgsError> {
             let arity = count!($($params),*);
-            let argc: usize = $state.pop().unwrap().try_into().unwrap();
+            let argc: usize = $state.pop().unwrap()?;
 
             if argc == arity {
-                pop_params!($state $(,$params)*);
-                $state.pop().unwrap(); // callee
-                checked_primitive_body!(($($params : $typs),*) $body)
+                pop_params!($state $(,$params : $typs)*);
+                $state.pop::<Value>().unwrap().unwrap(); // callee
+                $body
             } else {
                 Err(RuntimeError::Argc { callee: $state.get(argc).unwrap(), params: (arity, false), got: argc }
                    .into())
@@ -116,12 +95,12 @@ primitive! { identity_hash state (v: Value) {
 }}
 
 fn call(state: &mut State) -> Result<Op, PgsError> {
-    let arg_count: usize = state.pop().unwrap().try_into().unwrap();
+    let arg_count: usize = state.pop().unwrap()?;
     let callee: Closure = unsafe { transmute::<Value, Closure>(state.get(arg_count).unwrap()) };
 
     match callee.clovers() {
         &[env, body, rest_param, params] => {
-            let params: Vector = params.try_into().unwrap();
+            let params = state.downcast::<Vector>(params).unwrap();
             let fixed_argc = params.len();
             let variadic = rest_param != Value::NIL;
 
@@ -136,7 +115,7 @@ fn call(state: &mut State) -> Result<Op, PgsError> {
                 state.insert_after(arg_count, params.into());
                 state.insert_after(arg_count, rest_param);
 
-                state.set_env(env.try_into().unwrap());
+                state.set_env(state.downcast(env)?);
                 unsafe { state.push_scope() };
 
                 if variadic {
@@ -146,18 +125,18 @@ fn call(state: &mut State) -> Result<Op, PgsError> {
                     }
                     let rest_param = state.get(fixed_argc + 1).unwrap();
                     state.insert_after(1, rest_param);
-                    unsafe { state.define() };
+                    unsafe { state.define()? };
                 }
 
                 for ri in 0..fixed_argc {
                     let i = fixed_argc - 1 - ri;
                     let params = unsafe { transmute::<Value, Vector>(state.get(i + 2).unwrap()) };
                     state.insert_after(1, params[i]);
-                    unsafe { state.define() };
+                    unsafe { state.define()? };
                 }
 
-                state.pop(); // rest_param
-                state.pop(); // params
+                state.pop::<Value>().unwrap().unwrap(); // rest_param
+                state.pop::<Value>().unwrap().unwrap(); // params
                 Ok(Op::Eval)
             } else {
                 state.raise(RuntimeError::Argc {
@@ -172,20 +151,19 @@ fn call(state: &mut State) -> Result<Op, PgsError> {
 }
 
 fn apply(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+    let argc: usize = state.pop().unwrap()?;
 
     if argc >= 2 {
-        let f: Closure = state.get(argc - 1).unwrap().try_into()?;
-        let ls = state.pop().unwrap();
+        let mut ls: Value = state.pop::<Value>().unwrap().unwrap();
         let mut final_argc = argc - 2;
-        let mut cars = Cars::of(ls);
 
-        for arg in &mut cars {
-            state.push(arg);
+        while let Ok(pair) = state.downcast::<Pair>(ls) {
+            state.push(pair.car);
             final_argc += 1;
+            ls = pair.cdr;
         }
 
-        if cars.remainder() == Value::NIL {
+        if ls == Value::NIL {
             state.remove(final_argc + 1).unwrap(); // callee
             state.push(<usize as TryInto<Value>>::try_into(final_argc)?);
             Ok(Op::Apply)
@@ -208,7 +186,8 @@ primitive! { call_with_values state (producer: Value, consumer: Value) {
 }}
 
 fn values(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.peek().unwrap().try_into().unwrap();
+    let argc = state.peek().unwrap();
+    let argc: usize = state.downcast(argc)?;
     state.remove(argc + 1).unwrap(); // callee
     Ok(Op::Continue)
 }
@@ -225,20 +204,14 @@ primitive! { immediate_tag state (v: Value) {
     Ok(Op::Continue)
 }}
 
-primitive! { heap_tag state (v: HeapValue<()>) {
-    state.push(v.heap_tag() as u16);
-    state.push(1u16);
-    Ok(Op::Continue)
-}}
-
 primitive! { object_length state (v: HeapValue<()>) {
-    state.push(Value::try_from(unsafe { (*v.as_ptr()).len() }).unwrap());
+    state.push(Value::try_from(unsafe { (*v.header()).len() }).unwrap());
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { slot_ref state (o: HeapValue<()>, i: isize) {
-    if let Some(&v) = o.slots().get(i as usize) {
+primitive! { slot_ref state (o: HeapValue<()>, i: Fixnum) {
+    if let Some(&v) = o.slots().get(<Fixnum as Into<usize>>::into(i)) {
         state.push(v);
         state.push(1u16);
         Ok(Op::Continue)
@@ -247,16 +220,16 @@ primitive! { slot_ref state (o: HeapValue<()>, i: isize) {
     }
 }}
 
-primitive! { slot_set state (o: HeapValue<()>, i: usize, v: Value) {
+primitive! { slot_set state (o: HeapValue<()>, i: Fixnum, v: Value) {
     let mut o = o;
-    *o.slots_mut().get_mut(i).unwrap() = v;
+    *o.slots_mut().get_mut(<Fixnum as Into<usize>>::into(i)).unwrap() = v;
     state.push(Value::UNSPECIFIED);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
 fn cons(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+    let argc: usize = state.pop().unwrap()?;
 
     if argc == 2 {
         unsafe {
@@ -284,17 +257,17 @@ primitive! { cdr state (ls: Pair) {
 }}
 
 fn make_vector(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+    let argc: usize = state.pop().unwrap()?;
 
     match argc {
         1 => {
-            let len: usize = state.pop().unwrap().try_into()?;
+            let len: Fixnum = state.pop().unwrap()?;
             unsafe { state.push_vector(len) };
         },
         2 => {
-            let v = state.pop().unwrap();
-            let len: usize = state.pop().unwrap().try_into()?;
-            for _ in 0..len {
+            let v: Value = state.pop::<Value>().unwrap().unwrap();
+            let len: Fixnum = state.pop().unwrap()?;
+            for _ in 0..<Fixnum as Into<usize>>::into(len) {
                 state.push(v);
             }
             unsafe { state.vector(len) };
@@ -314,45 +287,34 @@ fn make_vector(state: &mut State) -> Result<Op, PgsError> {
     Ok(Op::Continue)
 }
 
-primitive! { vector_copy state (to: Vector, at: isize, from: Vector, start: isize, end: isize) {
-    assert!(0 <= at && at as usize <= to.len());
-    assert!(0 <= start && start as usize <= from.len());
-    assert!(start <= end && end as usize <= from.len());
-
-    unsafe { ptr::copy((from.data() as *const Value).offset(start), (to.data() as *mut Value).offset(at), (end - start) as usize); }
-    state.push(Value::UNSPECIFIED);
+primitive! { fx_lt state (a: Fixnum, b: Fixnum) {
+    state.push(a < b);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { fx_lt state (a: isize, b: isize) {
-    state.push(a < b); // OPTIMIZE
-    state.push(1u16);
-    Ok(Op::Continue)
-}}
-
-primitive! { fx_add state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a.checked_add(b).expect("overflow"))?); // OPTIMIZE
+primitive! { fx_add state (a: Fixnum, b: Fixnum) {
+    state.push((a + b)?);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
 fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+    let argc: usize = state.pop().unwrap()?;
 
     match argc {
         1 => {
-            let a: isize = state.pop().unwrap().try_into()?;
-            state.pop().unwrap(); // callee
-            state.push(Value::try_from(a.checked_neg().unwrap())?); // OPTIMIZE
+            let a: Fixnum = state.pop().unwrap()?;
+            state.pop::<Value>().unwrap().unwrap(); // callee
+            state.push((-a)?);
             state.push(1u16);
             Ok(Op::Continue)
         },
         2 => {
-            let b: isize = state.pop().unwrap().try_into()?;
-            let a: isize = state.pop().unwrap().try_into()?;
-            state.pop().unwrap(); // callee
-            state.push(<isize as TryInto<Value>>::try_into(a.checked_sub(b).expect("overflow"))?); // OPTIMIZE
+            let b: Fixnum = state.pop().unwrap()?;
+            let a: Fixnum = state.pop().unwrap()?;
+            state.pop::<Value>().unwrap().unwrap(); // callee
+            state.push((a - b)?);
             state.push(1u16);
             Ok(Op::Continue)
         },
@@ -367,54 +329,55 @@ fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
     }
 }
 
-primitive! { fx_mul state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a.checked_mul(b).expect("overflow"))?); // OPTIMIZE
+primitive! { fx_mul state (a: Fixnum, b: Fixnum) {
+    state.push((a * b)?);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { bitwise_and state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a & b)?); // OPTIMIZE
+primitive! { bitwise_and state (a: Fixnum, b: Fixnum) {
+    state.push(a & b);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { bitwise_ior state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a | b)?); // OPTIMIZE
+primitive! { bitwise_ior state (a: Fixnum, b: Fixnum) {
+    state.push(a | b);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { bitwise_xor state (a: isize, b: isize) {
-    state.push(<isize as TryInto<Value>>::try_into(a ^ b)?); // OPTIMIZE
+primitive! { bitwise_xor state (a: Fixnum, b: Fixnum) {
+    state.push(a ^ b);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { arithmetic_shift state (n: isize, count: isize) {
-    let shifted = if count < 0 {
-        n.checked_shr((-count) as u32).expect("overflow")
+primitive! { fx_arithmetic_shift state (n: Fixnum, count: Fixnum) {
+    let shifted = if count < 0u16.into() {
+        n >> (-count)?
     } else {
-        n.checked_shl(count as u32).expect("overflow")
+        n << count
     };
-    state.push(<isize as TryInto<Value>>::try_into(shifted)?); // OPTIMIZE
+    state.push(shifted?);
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
-primitive! { bit_count state (n: isize) {
-    state.push(n.count_ones() as u16);
+primitive! { bit_count state (n: Fixnum) {
+    state.push(n.count_ones());
     state.push(1u16);
     Ok(Op::Continue)
 }}
 
 fn record(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap().try_into().unwrap();
+    let argc: usize = state.pop().unwrap()?;
 
     if argc > 0 {
-        unsafe {
+        /*unsafe {
             state.record(argc);
-        }
+        }*/
+        todo!();
         state.remove(1).unwrap(); // callee
         state.push(1u16);
         Ok(Op::Continue)
@@ -432,11 +395,11 @@ primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line
         state.push(line);
         state.push(column);
         unsafe { state.collect_garbage(); }
-        let column = state.pop().unwrap();
-        let line = state.pop().unwrap();
-        let source = state.pop().unwrap();
-        let scopes = state.pop().unwrap();
-        let datum = state.pop().unwrap();
+        let column = state.pop().unwrap().unwrap();
+        let line = state.pop().unwrap().unwrap();
+        let source = state.pop().unwrap().unwrap();
+        let scopes = state.pop().unwrap().unwrap();
+        let datum = state.pop().unwrap().unwrap();
         Syntax::new(state, datum, scopes, source, line, column).unwrap()
     });
     state.push(syntax);
@@ -444,20 +407,23 @@ primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line
     Ok(Op::Continue)
 }}
 
-primitive! { make_type state (parent: Value, name: Symbol, fields: Vector) {
-    let typ = Type::new(state, Some(parent), name, fields).unwrap_or_else(|| {
+primitive! { make_type state (is_bytes: bool, is_flex: bool, name: Symbol, parent: Value, fields: Vector) {
+    todo!()
+/*
+    let typ = Type::new(state, is_bytes, is_flex, name, Some(parent), todo!(), &fields).unwrap_or_else(|| {
         state.push(parent);
         state.push(name);
         state.push(fields);
         unsafe { state.collect_garbage(); }
-        let fields = unsafe { transmute::<Value, Vector>(state.pop().unwrap()) };
-        let name = unsafe { transmute::<Value, Symbol>(state.pop().unwrap()) };
-        let parent = state.pop().unwrap();
-        Type::new(state, Some(parent), name, fields).unwrap()
+        let fields = unsafe { Vector::unchecked_downcast(state.pop().unwrap().unwrap()) };
+        let name = unsafe { Symbol::unchecked_downcast(state.pop().unwrap().unwrap()) };
+        let parent = state.pop().unwrap().unwrap();
+        Type::new(state, is_bytes, is_flex, name, Some(parent), todo!(), &fields).unwrap()
     });
     state.push(typ);
     state.push(1u16);
     Ok(Op::Continue)
+*/
 }}
 
 primitive! { immediate_type state (v: Value) {

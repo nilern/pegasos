@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 
 use super::lexer::{self, Lexer, Pos, Token};
 use super::objects::Pair;
-use super::refs::Value;
+use super::refs::{DynamicDowncast, Value};
 use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
@@ -161,7 +161,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                     },
                     Err(_) => {
                         for _ in 0..count + 1 {
-                            state.pop().unwrap();
+                            state.pop::<Value>().unwrap().unwrap();
                         } // { }
                     }
                 }
@@ -206,13 +206,13 @@ impl<I: Iterator<Item = char>> Parser<I> {
 
                 match res {
                     Ok(_) => {
-                        state.vector(len); // { source datum }
+                        state.vector(len.try_into().expect("Vector too big to parse")); // { source datum }
                         let loc = Loc { source: state.remove(1).unwrap(), pos }; // { datum }
                         state.push_syntax(loc).unwrap(); // { syntax }
                     },
                     Err(_) =>
                         for _ in 0..len + 1 {
-                            state.pop().unwrap();
+                            state.pop::<Value>().unwrap().unwrap();
                         }, // { }
                 }
 
@@ -226,10 +226,13 @@ impl<I: Iterator<Item = char>> Parser<I> {
                     Ok(None) =>
                         return Err(Error {
                             what: ErrorWhat::Eof,
-                            at: Loc { source: state.pop().unwrap(), pos: self.lexer.pos() }
+                            at: Loc {
+                                source: state.pop().unwrap().unwrap(),
+                                pos: self.lexer.pos()
+                            }
                         }),
                     res @ Err(_) => {
-                        state.pop().unwrap();
+                        state.pop::<Value>().unwrap().unwrap();
                         return res;
                     }
                 } // { source datum }
@@ -246,7 +249,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
             },
             Some(Ok((_, Identifier(_)))) =>
                 if let Some(Ok((pos, Identifier(sym)))) = self.lexer.next(state) {
-                    let loc = Loc { source: state.pop().unwrap(), pos };
+                    let loc = Loc { source: state.pop().unwrap().unwrap(), pos };
                     state.push(sym);
                     state.push_syntax(loc).unwrap();
                     Ok(Some(()))
@@ -255,7 +258,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 },
             Some(Ok((_, Const(_)))) =>
                 if let Some(Ok((pos, Const(v)))) = self.lexer.next(state) {
-                    let loc = Loc { source: state.pop().unwrap(), pos };
+                    let loc = Loc { source: state.pop().unwrap().unwrap(), pos };
                     state.push(v);
                     state.push_syntax(loc).unwrap();
                     Ok(Some(()))
@@ -264,15 +267,15 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 },
             Some(Ok((pos, tok @ RParen))) => Err(Error {
                 what: ErrorWhat::Unexpected(tok),
-                at: Loc { source: state.pop().unwrap(), pos }
+                at: Loc { source: state.pop().unwrap().unwrap(), pos }
             }),
             Some(Ok((pos, tok @ Dot))) => Err(Error {
                 what: ErrorWhat::Unexpected(tok),
-                at: Loc { source: state.pop().unwrap(), pos }
+                at: Loc { source: state.pop().unwrap().unwrap(), pos }
             }),
-            Some(Err(lex_err)) => Err(Error::from_lex(lex_err, state.pop().unwrap())),
+            Some(Err(lex_err)) => Err(Error::from_lex(lex_err, state.pop().unwrap().unwrap())),
             None => {
-                state.pop().unwrap();
+                state.pop::<Value>().unwrap().unwrap();
                 Ok(None)
             }
         }
@@ -293,10 +296,10 @@ impl<I: Iterator<Item = char>> Parser<I> {
                         Pair::new(state).unwrap()
                     });
 
-                    let parsed = state.pop().unwrap(); // { source (data prev)? }
+                    let parsed: Value = state.pop().unwrap().unwrap(); // { source (data prev)? }
                     if nonempty {
                         // { source data prev }
-                        let mut prev: Pair = state.pop().unwrap().try_into().unwrap();
+                        let mut prev = Pair::unchecked_downcast(state.pop().unwrap().unwrap());
                         prev.cdr = pair.into();
                     } else {
                         // { source }
@@ -310,7 +313,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 Ok(None) => {
                     if nonempty {
                         // { source data prev }
-                        let mut pair: Pair = state.pop().unwrap().try_into().unwrap();
+                        let mut pair = Pair::unchecked_downcast(state.pop().unwrap().unwrap());
                         pair.cdr = Value::NIL;
                     } else {
                         // { source }
@@ -327,10 +330,10 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 },
                 Err(err) => {
                     if nonempty {
-                        state.pop().unwrap(); // prev
-                        state.pop().unwrap(); // data
+                        state.pop::<Value>().unwrap().unwrap(); // prev
+                        state.pop::<Value>().unwrap().unwrap(); // data
                     }
-                    state.pop().unwrap(); // source
+                    state.pop::<Value>().unwrap().unwrap(); // source
                     return Err(err);
                 }
             }

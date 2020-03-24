@@ -1,19 +1,52 @@
 use std::char;
+use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
-use std::mem::{self, size_of, transmute};
-use std::ops::{Deref, DerefMut};
+use std::mem::{size_of, transmute};
+use std::ops::{Add, BitAnd, BitOr, BitXor, Deref, DerefMut, Mul, Neg, Shl, Shr, Sub};
 use std::slice;
 
 use strum_macros::EnumIter;
 
 use super::gc::{HeapObject, ObjectReference};
 use super::interpreter::RuntimeError;
-use super::objects::{BuiltInType, HeapTag, Heaped, Object, UnpackedHeapValue};
-use super::util::fsize;
+use super::objects::{
+    Bindings, Closure, Object, Pair, PgsString, Symbol, Syntax, Type, UnpackedHeapValue, Vector
+};
+use super::state::State;
+use super::util::{fsize, Bool, False};
+
+// ---
+
+pub trait DynamicDowncast: TryInto<Value> {
+    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError>;
+
+    unsafe fn unchecked_downcast(v: Value) -> Self;
+}
+
+pub trait DynamicType: Sized {
+    type IsBytes: Bool;
+    type IsFlex: Bool;
+
+    fn reify(state: &State) -> Type;
+}
+
+impl<T: DynamicType> DynamicDowncast for HeapValue<T> {
+    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError> {
+        if state.type_of(v) == T::reify(state) {
+            Ok(unsafe { Self::unchecked_downcast(v) })
+        } else {
+            Err(RuntimeError::Type { expected: T::reify(state), value: v })
+        }
+    }
+
+    unsafe fn unchecked_downcast(value: Value) -> Self {
+        HeapValue { value, _phantom: PhantomData }
+    }
+}
 
 // ---
 
@@ -22,6 +55,7 @@ use super::util::fsize;
 // still on 32-bit you already have a bad time, anyway.
 
 #[derive(Debug, PartialEq, EnumIter)]
+#[repr(usize)]
 pub enum Tag {
     Fixnum = 0, // i29 | i61, 0 => less fiddly arithmetic
     ORef = 1,   // the 1 should often sink into addressing modes
@@ -67,15 +101,21 @@ pub struct Value(usize);
 impl ObjectReference for Value {
     type Object = Object;
 
-    unsafe fn from_ptr(data: *mut u8) -> Self { Self(data as usize | Tag::ORef as usize) }
+    unsafe fn from_ptr(data: *mut u8) -> Self { Self(data as usize + Tag::ORef as usize) }
 
     fn as_mut_ptr(self) -> Option<*mut Object> {
         if self.has_tag(Tag::ORef) {
-            Some(unsafe { ((self.0 & !Self::MASK) as *mut Object).offset(-1) })
+            Some(unsafe { ((self.0 - Tag::ORef as usize) as *mut Object).offset(-1) })
         } else {
             None
         }
     }
+}
+
+impl DynamicDowncast for Value {
+    fn downcast(_: &State, v: Value) -> Result<Self, RuntimeError> { Ok(v) }
+
+    unsafe fn unchecked_downcast(v: Value) -> Self { v }
 }
 
 impl Value {
@@ -94,7 +134,7 @@ impl Value {
 
     const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 29 | 61
 
-    pub fn tag(self) -> Tag { unsafe { transmute::<u8, Tag>((self.0 & Self::MASK) as u8) } }
+    pub fn tag(self) -> Tag { unsafe { transmute::<usize, Tag>(self.0 & Self::MASK) } }
 
     pub fn has_tag(self, tag: Tag) -> bool { self.tag() == tag }
 
@@ -142,19 +182,7 @@ impl TryFrom<isize> for Value {
         {
             Ok(Self((n << Self::SHIFT) as usize | Tag::Fixnum as usize))
         } else {
-            Err(RuntimeError::Overflow(BuiltInType::Fixnum))
-        }
-    }
-}
-
-impl TryInto<isize> for Value {
-    type Error = RuntimeError;
-
-    fn try_into(self) -> Result<isize, Self::Error> {
-        if self.has_tag(Tag::Fixnum) {
-            Ok(self.0 as isize >> Self::SHIFT)
-        } else {
-            Err(RuntimeError::Type { value: self, expected: BuiltInType::Fixnum })
+            Err(RuntimeError::FixnumOverflow)
         }
     }
 }
@@ -167,21 +195,17 @@ impl TryFrom<usize> for Value {
             // fits in 29 | 61 bits, OPTIMIZE
             Ok(Self(n << Self::SHIFT | Tag::Fixnum as usize))
         } else {
-            Err(RuntimeError::Overflow(BuiltInType::Fixnum))
+            Err(RuntimeError::FixnumOverflow)
         }
     }
 }
 
-impl TryInto<usize> for Value {
-    type Error = RuntimeError;
-
-    fn try_into(self) -> Result<usize, Self::Error> {
-        if self.has_tag(Tag::Fixnum) {
-            Ok(self.0 >> Self::SHIFT)
-        } else {
-            Err(RuntimeError::Type { value: self, expected: BuiltInType::Fixnum })
-        }
+impl DynamicDowncast for usize {
+    fn downcast(state: &State, value: Value) -> Result<Self, RuntimeError> {
+        state.downcast::<Fixnum>(value).map(|n| n.into())
     }
+
+    unsafe fn unchecked_downcast(v: Value) -> Self { v.0 >> Value::SHIFT }
 }
 
 impl TryFrom<fsize> for Value {
@@ -190,11 +214,9 @@ impl TryFrom<fsize> for Value {
     fn try_from(n: fsize) -> Result<Self, Self::Error> {
         if unimplemented!() {
             // fits in 29 | 61 bits
-            Ok(Self(
-                (unsafe { mem::transmute::<fsize, usize>(n) } & !Self::MASK) | Tag::Flonum as usize
-            ))
+            Ok(Self((unsafe { transmute::<fsize, usize>(n) } & !Self::MASK) | Tag::Flonum as usize))
         } else {
-            Err(RuntimeError::Overflow(BuiltInType::Flonum))
+            Err(RuntimeError::FlonumOverflow)
         }
     }
 }
@@ -203,32 +225,25 @@ impl From<char> for Value {
     fn from(c: char) -> Self { Self((c as usize) << Self::SHIFT | Tag::Char as usize) }
 }
 
-impl TryInto<char> for Value {
-    type Error = RuntimeError;
-
-    fn try_into(self) -> Result<char, Self::Error> {
-        if self.has_tag(Tag::Char) {
-            Ok(unsafe { char::from_u32_unchecked((self.0 >> Self::SHIFT) as u32) })
-        } else {
-            Err(RuntimeError::Type { value: self, expected: BuiltInType::Char })
-        }
-    }
-}
-
 impl From<bool> for Value {
     fn from(b: bool) -> Self { Self((b as usize) << Self::SHIFT | Tag::Bool as usize) }
 }
 
-impl TryInto<bool> for Value {
-    type Error = RuntimeError;
-
-    fn try_into(self) -> Result<bool, Self::Error> {
-        if self.has_tag(Tag::Bool) {
-            Ok(self.0 >> Self::SHIFT != 0)
+impl DynamicDowncast for bool {
+    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError> {
+        if v.has_tag(Tag::Bool) {
+            Ok(unsafe { Self::unchecked_downcast(v) })
         } else {
-            Err(RuntimeError::Type { value: self, expected: BuiltInType::Char })
+            Err(RuntimeError::Type {
+                value: v,
+                expected: unsafe {
+                    Type::unchecked_downcast(state.immediate_types()[Tag::Bool as usize])
+                }
+            })
         }
     }
+
+    unsafe fn unchecked_downcast(v: Value) -> Self { v.0 >> Value::SHIFT != 0 }
 }
 
 impl Debug for Value {
@@ -255,19 +270,193 @@ impl Display for Value {
 
 // ---
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct Fixnum(Value);
+
+impl Fixnum {
+    const TAG: Tag = Tag::Fixnum;
+    const WIDTH: usize = 8 * size_of::<Self>() - Value::SHIFT;
+
+    pub fn count_ones(self) -> Fixnum { Fixnum::from((self.0).0.count_ones() as u16) }
+}
+
+impl From<u16> for Fixnum {
+    fn from(n: u16) -> Self { Self(Value((n as usize) << Value::SHIFT)) }
+}
+
+impl TryFrom<usize> for Fixnum {
+    type Error = RuntimeError;
+
+    fn try_from(n: usize) -> Result<Self, Self::Error> {
+        if n >> Value::BOUNDS_SHIFT == 0 {
+            // fits in 29 | 61 bits, OPTIMIZE
+            Ok(Self(Value(n << Value::SHIFT | Tag::Fixnum as usize)))
+        } else {
+            Err(RuntimeError::FixnumOverflow)
+        }
+    }
+}
+
+impl From<Fixnum> for Value {
+    fn from(n: Fixnum) -> Value { n.0 }
+}
+
+impl DynamicDowncast for Fixnum {
+    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError> {
+        if v.tag() == Self::TAG {
+            Ok(Self(v))
+        } else {
+            Err(RuntimeError::Type {
+                expected: unsafe {
+                    Type::unchecked_downcast(state.immediate_types()[Tag::Fixnum as usize])
+                },
+                value: v
+            })
+        }
+    }
+
+    unsafe fn unchecked_downcast(v: Value) -> Self { Self(v) }
+}
+
+impl Into<isize> for Fixnum {
+    fn into(self) -> isize { ((self.0).0 as isize) >> Value::SHIFT }
+}
+
+impl Into<usize> for Fixnum {
+    fn into(self) -> usize { (self.0).0 >> Value::SHIFT }
+}
+
+impl Add for Fixnum {
+    type Output = Result<Fixnum, RuntimeError>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        if let Some(res) = ((self.0).0 as isize).checked_add((rhs.0).0 as isize) {
+            Ok(Self(Value(res as usize)))
+        } else {
+            Err(RuntimeError::FixnumOverflow)
+        }
+    }
+}
+
+impl Sub for Fixnum {
+    type Output = Result<Fixnum, RuntimeError>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        if let Some(res) = ((self.0).0 as isize).checked_sub((rhs.0).0 as isize) {
+            Ok(Self(Value(res as usize)))
+        } else {
+            Err(RuntimeError::FixnumOverflow)
+        }
+    }
+}
+
+impl Mul for Fixnum {
+    type Output = Result<Fixnum, RuntimeError>;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        if let Some(res) = ((self.0).0 as isize).checked_mul((rhs.0).0 as isize >> Value::SHIFT) {
+            Ok(Self(Value(res as usize)))
+        } else {
+            Err(RuntimeError::FixnumOverflow)
+        }
+    }
+}
+
+impl Neg for Fixnum {
+    type Output = Result<Fixnum, RuntimeError>;
+
+    fn neg(self) -> Self::Output {
+        if let Some(res) = ((self.0).0 as isize).checked_neg() {
+            Ok(Self(Value(res as usize)))
+        } else {
+            Err(RuntimeError::FixnumOverflow)
+        }
+    }
+}
+
+impl BitAnd for Fixnum {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output { Self(Value((self.0).0 & (rhs.0).0)) }
+}
+
+impl BitOr for Fixnum {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output { Self(Value((self.0).0 | (rhs.0).0)) }
+}
+
+impl BitXor for Fixnum {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self::Output { Self(Value((self.0).0 ^ (rhs.0).0)) }
+}
+
+#[cfg(target_pointer_width = "64")]
+impl Shl for Fixnum {
+    type Output = Result<Fixnum, RuntimeError>;
+
+    fn shl(self, rhs: Self) -> Self::Output {
+        let shift: isize = rhs.into();
+
+        if 0 <= shift && shift < Self::WIDTH as isize {
+            let n: i128 = ((self.0).0 as isize as i128) << shift;
+            if let Ok(n) = isize::try_from(n) {
+                Ok(Self(Value(n as usize)))
+            } else {
+                Err(RuntimeError::FixnumOverflow)
+            }
+        } else {
+            Err(RuntimeError::FixnumOverflow)
+        }
+    }
+}
+
+impl Shr for Fixnum {
+    type Output = Result<Fixnum, RuntimeError>;
+
+    fn shr(self, rhs: Self) -> Self::Output {
+        let shift: isize = rhs.into();
+
+        if 0 <= shift && shift < Self::WIDTH as isize {
+            Ok(Self(Value((((self.0).0 as isize) >> shift) as usize & !Value::MASK)))
+        } else {
+            Err(RuntimeError::FixnumOverflow)
+        }
+    }
+}
+
+impl PartialOrd for Fixnum {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { (self.0).0.partial_cmp(&(other.0).0) }
+
+    fn lt(&self, other: &Self) -> bool { (self.0).0.lt(&(other.0).0) }
+    fn le(&self, other: &Self) -> bool { (self.0).0.le(&(other.0).0) }
+    fn gt(&self, other: &Self) -> bool { (self.0).0.gt(&(other.0).0) }
+    fn ge(&self, other: &Self) -> bool { (self.0).0.ge(&(other.0).0) }
+}
+
+impl Display for Fixnum {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", <Fixnum as Into<isize>>::into(*self)) // HACK
+    }
+}
+
+// ---
+
 #[derive(Debug, Clone, Copy, EnumIter)]
 #[repr(usize)]
 pub enum Primop {
     Void = 0 << Value::SHIFT | Tag::Fixnum as usize,
     Eq = 1 << Value::SHIFT | Tag::Fixnum as usize,
-    IdentityHash = 2 << Value::SHIFT | Tag::Fixnum as usize,
-    Call = 3 << Value::SHIFT | Tag::Fixnum as usize,
-    Apply = 4 << Value::SHIFT | Tag::Fixnum as usize,
-    CallWithValues = 5 << Value::SHIFT | Tag::Fixnum as usize,
-    Values = 6 << Value::SHIFT | Tag::Fixnum as usize,
-    SymbolHash = 7 << Value::SHIFT | Tag::Fixnum as usize,
-    ImmediateTypeIndex = 8 << Value::SHIFT | Tag::Fixnum as usize,
-    HeapTypeIndex = 9 << Value::SHIFT | Tag::Fixnum as usize,
+    ImmediateType = 2 << Value::SHIFT | Tag::Fixnum as usize,
+    IdentityHash = 3 << Value::SHIFT | Tag::Fixnum as usize,
+    Call = 4 << Value::SHIFT | Tag::Fixnum as usize,
+    Apply = 5 << Value::SHIFT | Tag::Fixnum as usize,
+    CallWithValues = 6 << Value::SHIFT | Tag::Fixnum as usize,
+    Values = 7 << Value::SHIFT | Tag::Fixnum as usize,
+    SymbolHash = 8 << Value::SHIFT | Tag::Fixnum as usize,
+    ImmediateTypeIndex = 9 << Value::SHIFT | Tag::Fixnum as usize,
     Length = 10 << Value::SHIFT | Tag::Fixnum as usize,
     SlotRef = 11 << Value::SHIFT | Tag::Fixnum as usize,
     SlotSet = 12 << Value::SHIFT | Tag::Fixnum as usize,
@@ -276,19 +465,17 @@ pub enum Primop {
     Car = 15 << Value::SHIFT | Tag::Fixnum as usize,
     Cdr = 16 << Value::SHIFT | Tag::Fixnum as usize,
     MakeVector = 17 << Value::SHIFT | Tag::Fixnum as usize,
-    VectorCopy = 18 << Value::SHIFT | Tag::Fixnum as usize,
-    FxLt = 19 << Value::SHIFT | Tag::Fixnum as usize,
-    FxAdd = 20 << Value::SHIFT | Tag::Fixnum as usize,
-    FxSub = 21 << Value::SHIFT | Tag::Fixnum as usize,
-    FxMul = 22 << Value::SHIFT | Tag::Fixnum as usize,
-    BitwiseAnd = 23 << Value::SHIFT | Tag::Fixnum as usize,
-    BitwiseIor = 24 << Value::SHIFT | Tag::Fixnum as usize,
-    BitwiseXor = 25 << Value::SHIFT | Tag::Fixnum as usize,
-    ArithmeticShift = 26 << Value::SHIFT | Tag::Fixnum as usize,
-    BitCount = 27 << Value::SHIFT | Tag::Fixnum as usize,
-    MakeSyntax = 28 << Value::SHIFT | Tag::Fixnum as usize,
-    MakeType = 29 << Value::SHIFT | Tag::Fixnum as usize,
-    ImmediateType = 30 << Value::SHIFT | Tag::Fixnum as usize
+    FxLt = 18 << Value::SHIFT | Tag::Fixnum as usize,
+    FxAdd = 19 << Value::SHIFT | Tag::Fixnum as usize,
+    FxSub = 20 << Value::SHIFT | Tag::Fixnum as usize,
+    FxMul = 21 << Value::SHIFT | Tag::Fixnum as usize,
+    BitwiseAnd = 24 << Value::SHIFT | Tag::Fixnum as usize,
+    BitwiseIor = 25 << Value::SHIFT | Tag::Fixnum as usize,
+    BitwiseXor = 26 << Value::SHIFT | Tag::Fixnum as usize,
+    FxArithmeticShift = 27 << Value::SHIFT | Tag::Fixnum as usize,
+    BitCount = 28 << Value::SHIFT | Tag::Fixnum as usize,
+    MakeSyntax = 29 << Value::SHIFT | Tag::Fixnum as usize,
+    MakeType = 30 << Value::SHIFT | Tag::Fixnum as usize
 }
 
 impl Display for Primop {
@@ -306,7 +493,6 @@ impl Display for Primop {
             Values => write!(f, "values"),
             SymbolHash => write!(f, "symbol-hash"),
             ImmediateTypeIndex => write!(f, "immediate-tag"),
-            HeapTypeIndex => write!(f, "heap-tag"),
             Length => write!(f, "object-length"),
             SlotRef => write!(f, "slot-ref"),
             SlotSet => write!(f, "slot-set!"),
@@ -315,7 +501,6 @@ impl Display for Primop {
             Car => write!(f, "car"),
             Cdr => write!(f, "cdr"),
             MakeVector => write!(f, "make-vector"),
-            VectorCopy => write!(f, "vector-copy!"),
             FxLt => write!(f, "fx<?"),
             FxAdd => write!(f, "fx+"),
             FxSub => write!(f, "fx-"),
@@ -323,7 +508,7 @@ impl Display for Primop {
             BitwiseAnd => write!(f, "bitwise-and"),
             BitwiseIor => write!(f, "bitwise-ior"),
             BitwiseXor => write!(f, "bitwise-xor"),
-            ArithmeticShift => write!(f, "arithmetic-shift"),
+            FxArithmeticShift => write!(f, "arithmetic-shift"),
             BitCount => write!(f, "bit-count"),
             MakeSyntax => write!(f, "make-syntax"),
             MakeType => write!(f, "make-type"),
@@ -386,15 +571,15 @@ impl<T> PartialEq for HeapValue<T> {
 }
 
 impl<T: ?Sized> HeapValue<T> {
-    pub fn heap_tag(self) -> HeapTag { unsafe { (*self.as_ptr()).tag() } }
+    pub fn header(self) -> *const Object { unsafe { (self.data() as *const Object).offset(-1) } }
 
-    pub fn as_ptr(self) -> *mut Object { unsafe { (self.data() as *mut Object).offset(-1) } }
+    pub fn header_mut(self) -> *mut Object { unsafe { (self.data() as *mut Object).offset(-1) } }
 
-    pub fn data(self) -> *mut u8 { (self.value.0 & !Value::MASK) as *mut u8 }
+    pub fn data(self) -> *mut u8 { (self.value.0 - Tag::ORef as usize) as *mut u8 }
 
     pub fn slots<'a>(&'a self) -> &'a [Value] {
         unsafe {
-            let obj = &mut *self.as_ptr();
+            let obj = &mut *self.header_mut();
             slice::from_raw_parts(
                 obj.data() as *mut Value,
                 if obj.is_bytes() { 0 } else { obj.len() }
@@ -404,7 +589,7 @@ impl<T: ?Sized> HeapValue<T> {
 
     pub fn slots_mut<'a>(&'a mut self) -> &'a mut [Value] {
         unsafe {
-            let obj = &mut *self.as_ptr();
+            let obj = &mut *self.header_mut();
             slice::from_raw_parts_mut(
                 obj.data() as *mut Value,
                 if obj.is_bytes() { 0 } else { obj.len() }
@@ -412,41 +597,42 @@ impl<T: ?Sized> HeapValue<T> {
         }
     }
 
-    pub fn identity_hash(self) -> usize { unsafe { (*self.as_ptr()).identity_hash() } }
+    pub fn identity_hash(self) -> usize { unsafe { (*self.header_mut()).identity_hash() } }
 }
 
 impl HeapValue<()> {
-    pub fn unpack(self) -> UnpackedHeapValue {
-        match self.heap_tag() {
-            HeapTag::Vector =>
-                UnpackedHeapValue::Vector(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::String =>
-                UnpackedHeapValue::String(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::Symbol =>
-                UnpackedHeapValue::Symbol(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::Pair =>
-                UnpackedHeapValue::Pair(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::Bindings =>
-                UnpackedHeapValue::Bindings(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::Closure =>
-                UnpackedHeapValue::Closure(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::Syntax =>
-                UnpackedHeapValue::Syntax(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::Record =>
-                UnpackedHeapValue::Record(HeapValue { value: self.value, _phantom: PhantomData }),
-            HeapTag::Type =>
-                UnpackedHeapValue::Type(HeapValue { value: self.value, _phantom: PhantomData }),
+    pub fn typ(self) -> Type { unsafe { (*self.header()).typ() } }
+
+    pub fn unpack(self, state: &State) -> UnpackedHeapValue {
+        if let Ok(vec) = state.downcast::<Vector>(self.into()) {
+            UnpackedHeapValue::Vector(vec)
+        } else if let Ok(s) = state.downcast::<PgsString>(self.into()) {
+            UnpackedHeapValue::String(s)
+        } else if let Ok(s) = state.downcast::<Symbol>(self.into()) {
+            UnpackedHeapValue::Symbol(s)
+        } else if let Ok(p) = state.downcast::<Pair>(self.into()) {
+            UnpackedHeapValue::Pair(p)
+        } else if let Ok(env) = state.downcast::<Bindings>(self.into()) {
+            UnpackedHeapValue::Bindings(env)
+        } else if let Ok(f) = state.downcast::<Closure>(self.into()) {
+            UnpackedHeapValue::Closure(f)
+        } else if let Ok(s) = state.downcast::<Syntax>(self.into()) {
+            UnpackedHeapValue::Syntax(s)
+        } else if let Ok(t) = state.downcast::<Type>(self.into()) {
+            UnpackedHeapValue::Type(t)
+        } else {
+            todo!()
         }
     }
 }
 
-impl<T> Deref for HeapValue<T> {
+impl<T: DynamicType<IsFlex = False>> Deref for HeapValue<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target { unsafe { &*(self.data() as *const T) } }
 }
 
-impl<T> DerefMut for HeapValue<T> {
+impl<T: DynamicType<IsFlex = False>> DerefMut for HeapValue<T> {
     fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *(self.data() as *mut T) } }
 }
 
@@ -455,39 +641,31 @@ impl<T: ?Sized> From<HeapValue<T>> for Value {
 }
 
 impl TryFrom<Value> for HeapValue<()> {
-    type Error = (); // FIXME
+    type Error = RuntimeError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         if value.has_tag(Tag::ORef) {
             Ok(Self { value, _phantom: PhantomData })
         } else {
-            Err(())
+            todo!()
         }
     }
 }
 
-impl<T: Heaped + ?Sized> TryFrom<Value> for HeapValue<T> {
-    type Error = RuntimeError;
+impl DynamicDowncast for HeapValue<()> {
+    fn downcast(_: &State, v: Value) -> Result<Self, RuntimeError> { Self::try_from(v) }
 
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Ok(oref) = HeapValue::<()>::try_from(value) {
-            if oref.heap_tag() == T::TAG {
-                Ok(HeapValue { value: oref.value, _phantom: PhantomData })
-            } else {
-                Err(RuntimeError::Type { value, expected: T::TYPE })
-            }
-        } else {
-            Err(RuntimeError::Type { value, expected: T::TYPE })
-        }
+    unsafe fn unchecked_downcast(value: Value) -> Self {
+        HeapValue { value, _phantom: PhantomData }
     }
 }
 
-impl<T: Debug> Debug for HeapValue<T> {
+impl<T: DynamicType<IsFlex = False> + Debug> Debug for HeapValue<T> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { <T as Debug>::fmt(&*self, f) }
 }
 
 impl Display for HeapValue<()> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.unpack().fmt(f) }
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { todo!() }
 }
 
 // ---
