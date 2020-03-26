@@ -643,11 +643,11 @@ mod tests {
         state.push(Value::from('a'));
         run(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::from('a'));
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from('a'));
 
         unsafe { state.push_string("foo") };
         run(&mut state).unwrap();
-        let res: PgsString = state.pop().unwrap().try_into().unwrap();
+        let res: PgsString = state.pop().unwrap().unwrap();
 
         assert_eq!(res.as_str(), "foo");
     }
@@ -669,17 +669,17 @@ mod tests {
         let mut parser = Parser::new(Lexer::new("(define foo 5)".chars()));
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
-        assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::UNSPECIFIED);
 
         let mut parser = Parser::new(Lexer::new("(set! foo 8)".chars()));
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
-        assert_eq!(state.pop().unwrap(), Value::UNSPECIFIED);
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::UNSPECIFIED);
 
         let mut parser = Parser::new(Lexer::new("foo".chars()));
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
-        assert_eq!(state.pop().unwrap(), Value::from(8i16));
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(8i16));
     }
 
     #[test]
@@ -691,7 +691,7 @@ mod tests {
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::NIL);
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::NIL);
 
         let mut parser = Parser::new(Lexer::new("(quote () ())".chars()));
 
@@ -708,7 +708,7 @@ mod tests {
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::from(23i16));
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(23i16));
 
         let mut parser = Parser::new(Lexer::new("(begin)".chars()));
 
@@ -725,7 +725,7 @@ mod tests {
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::from(42i16));
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(42i16));
     }
 
     #[test]
@@ -738,7 +738,7 @@ mod tests {
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::from(8i16));
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(8i16));
     }
 
     #[test]
@@ -750,6 +750,6 @@ mod tests {
         unsafe { parser.sexprs(&mut state, "test").unwrap() };
         run(&mut state).unwrap();
 
-        assert_eq!(state.pop().unwrap(), Value::from(8i16));
+        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(8i16));
     }
 }

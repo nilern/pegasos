@@ -279,20 +279,22 @@ mod tests {
     #[test]
     fn test_alloc() {
         let mut heap: MemoryManager<Obj> = MemoryManager::new(4 << 10, 1 << 20);
-        let obj = Obj { header: Hdr::from_size(32) };
-        assert!(heap.alloc(obj).is_some());
+        let size = 32;
+        let obj = Obj { header: Hdr::from_size(size) };
+        assert!(heap.alloc(obj, size).is_some());
     }
 
     #[test]
     fn test_collect() {
         let mut heap: MemoryManager<Obj> = MemoryManager::new(4 << 10, 1 << 20);
+        let size = 32;
         let obj = Obj { header: Hdr::from_size(32) };
 
         for _ in 0..10 {
-            assert!(heap.alloc(obj).is_some());
+            assert!(heap.alloc(obj, size).is_some());
         }
 
-        let mut roots = [heap.alloc(obj).unwrap(), heap.alloc(obj).unwrap()];
+        let mut roots = [heap.alloc(obj, size).unwrap(), heap.alloc(obj, size).unwrap()];
         unsafe {
             heap.collection().roots(roots.iter_mut().map(|v| v as *mut Ref)).traverse();
         }

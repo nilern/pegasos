@@ -933,7 +933,7 @@ mod tests {
         let len = 7;
         let i = 3;
 
-        let mut vec = Vector::new(&mut state, len).unwrap();
+        let mut vec = Vector::new(&mut state, len.try_into().unwrap()).unwrap();
 
         assert_eq!(vec.len(), len);
         assert_eq!(vec[i], Value::from(0i16));
@@ -989,18 +989,18 @@ mod tests {
         let b = Value::from(8i16);
         let foo = unsafe {
             state.push_symbol("foo");
-            state.pop().unwrap().try_into().unwrap()
+            state.pop().unwrap().unwrap()
         };
         let bar = unsafe {
             state.push_symbol("bar");
-            state.pop().unwrap().try_into().unwrap()
+            state.pop().unwrap().unwrap()
         };
 
         bindings.insert(&mut state, foo, a).unwrap();
         bindings.insert(&mut state, bar, b).unwrap();
 
-        assert_eq!(bindings.get(foo).unwrap(), a);
-        assert_eq!(bindings.get(bar).unwrap(), b);
+        assert_eq!(bindings.get(&state, foo).unwrap(), a);
+        assert_eq!(bindings.get(&state, bar).unwrap(), b);
     }
 
     #[test]

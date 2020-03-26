@@ -358,7 +358,7 @@ mod tests {
             state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().unwrap();
 
         assert_eq!(parsed.datum, Value::from(23i16));
     }
@@ -370,14 +370,14 @@ mod tests {
         unsafe {
             state.push_symbol("foo");
         }
-        let symbol: Symbol = state.pop().unwrap().try_into().unwrap();
+        let symbol: Symbol = state.pop().unwrap().unwrap();
 
         unsafe {
             state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
-        let parsed: Symbol = parsed.datum.try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().unwrap();
+        let parsed: Symbol = state.downcast(parsed.datum).unwrap();
 
         assert_eq!(parsed.as_str(), symbol.as_str());
         assert_eq!(parsed.hash, symbol.hash);
@@ -392,7 +392,7 @@ mod tests {
             state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().unwrap();
 
         assert_eq!(parsed.datum, Value::NIL);
     }
@@ -406,10 +406,10 @@ mod tests {
             state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
-        let parsed: Pair = parsed.datum.try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().unwrap();
+        let parsed: Pair = state.downcast(parsed.datum).unwrap();
 
-        assert_eq!(Syntax::try_from(parsed.car).unwrap().datum, Value::from(5i16));
+        assert_eq!(state.downcast::<Syntax>(parsed.car).unwrap().datum, Value::from(5i16));
         assert_eq!(parsed.cdr, Value::NIL);
     }
 
@@ -422,11 +422,11 @@ mod tests {
             state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
-        let parsed: Pair = parsed.datum.try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().unwrap();
+        let parsed: Pair = state.downcast(parsed.datum).unwrap();
 
-        assert_eq!(Syntax::try_from(parsed.car).unwrap().datum, Value::from(5i16));
-        assert_eq!(Syntax::try_from(parsed.cdr).unwrap().datum, Value::from(8i16));
+        assert_eq!(state.downcast::<Syntax>(parsed.car).unwrap().datum, Value::from(5i16));
+        assert_eq!(state.downcast::<Syntax>(parsed.cdr).unwrap().datum, Value::from(8i16));
     }
 
     #[test]
@@ -438,10 +438,10 @@ mod tests {
             state.push_string("test");
             parser.sexpr(&mut state).unwrap();
         }
-        let parsed: Syntax = state.pop().unwrap().try_into().unwrap();
-        let parsed: Vector = parsed.datum.try_into().unwrap();
+        let parsed: Syntax = state.pop().unwrap().unwrap();
+        let parsed: Vector = state.downcast(parsed.datum).unwrap();
 
         assert_eq!(parsed.len(), 1);
-        assert_eq!(Syntax::try_from(parsed[0]).unwrap().datum, Value::from(5i16));
+        assert_eq!(state.downcast::<Syntax>(parsed[0]).unwrap().datum, Value::from(5i16));
     }
 }

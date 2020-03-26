@@ -582,9 +582,9 @@ mod tests {
             state.collect_garbage();
         } // overwrite initial heap and generally cause more havoc
 
-        let mut ls = state.pop().unwrap();
+        let mut ls = state.pop().unwrap().unwrap();
         for i in 0..n {
-            let pair = Pair::try_from(ls).unwrap();
+            let pair: Pair = state.downcast(ls).unwrap();
             assert_eq!(pair.car, i.into());
             ls = pair.cdr;
         }

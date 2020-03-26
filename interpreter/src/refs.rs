@@ -187,6 +187,14 @@ impl TryFrom<isize> for Value {
     }
 }
 
+impl DynamicDowncast for isize {
+    fn downcast(state: &State, value: Value) -> Result<Self, RuntimeError> {
+        state.downcast::<Fixnum>(value).map(|n| n.into())
+    }
+
+    unsafe fn unchecked_downcast(v: Value) -> Self { v.0 as isize >> Value::SHIFT }
+}
+
 impl TryFrom<usize> for Value {
     type Error = RuntimeError;
 
@@ -223,6 +231,25 @@ impl TryFrom<fsize> for Value {
 
 impl From<char> for Value {
     fn from(c: char) -> Self { Self((c as usize) << Self::SHIFT | Tag::Char as usize) }
+}
+
+impl DynamicDowncast for char {
+    fn downcast(state: &State, value: Value) -> Result<Self, RuntimeError> {
+        if value.has_tag(Tag::Char) {
+            Ok(unsafe { Self::unchecked_downcast(value) })
+        } else {
+            Err(RuntimeError::Type {
+                expected: unsafe {
+                    Type::unchecked_downcast(state.immediate_types()[Tag::Char as usize])
+                },
+                value
+            })
+        }
+    }
+
+    unsafe fn unchecked_downcast(v: Value) -> Self {
+        char::from_u32_unchecked((v.0 >> Value::SHIFT) as u32)
+    }
 }
 
 impl From<bool> for Value {
@@ -676,38 +703,44 @@ mod tests {
 
     #[test]
     fn test_char() {
+        let state = State::new(&[], 1 << 20, 1 << 20);
+
         let c = 'a';
 
         let v = Value::from(c);
 
         assert!(!v.has_tag(Tag::ORef));
-        assert_eq!(c, v.try_into().unwrap());
+        assert_eq!(c, state.downcast(v).unwrap());
     }
 
     #[test]
     fn test_bool() {
+        let state = State::new(&[], 1 << 20, 1 << 20);
+
         let b = true;
 
         let v = Value::from(b);
 
         assert!(!v.has_tag(Tag::ORef));
-        assert_eq!(b, v.try_into().unwrap());
+        assert_eq!(b, state.downcast(v).unwrap());
     }
 
     #[test]
     fn test_fixnum() {
+        let state = State::new(&[], 1 << 20, 1 << 20);
+
         let n = 23isize;
 
         let v = Value::from(23i16);
 
         assert!(!v.has_tag(Tag::ORef));
-        assert_eq!(n, v.try_into().unwrap());
+        assert_eq!(n, state.downcast(v).unwrap());
 
         let m = -n;
 
         let u = Value::try_from(m).unwrap();
 
         assert!(!u.has_tag(Tag::ORef));
-        assert_eq!(m, u.try_into().unwrap());
+        assert_eq!(m, state.downcast(u).unwrap());
     }
 }
