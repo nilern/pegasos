@@ -16,7 +16,9 @@ use super::objects::{
     SyntaxObject, Type, TypeData, Vector, VectorData
 };
 use super::parser::Loc;
-use super::refs::{DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
+use super::refs::{
+    DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, StatefulDisplay, Tag, Value
+};
 use super::util::{Bool, False, True};
 
 // ---
@@ -547,7 +549,7 @@ impl State {
             writeln!(dest, "{:?}", tag)?;
 
             for slot in slots.iter().rev() {
-                writeln!(dest, "\t{}", slot)?;
+                writeln!(dest, "\t{}", slot.fmt_wrap(self))?;
             }
         }
 

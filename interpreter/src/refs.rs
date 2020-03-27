@@ -14,7 +14,8 @@ use strum_macros::EnumIter;
 use super::gc::{HeapObject, ObjectReference};
 use super::interpreter::RuntimeError;
 use super::objects::{
-    Bindings, Closure, Object, Pair, PgsString, Symbol, Syntax, Type, UnpackedHeapValue, Vector
+    Bindings, Closure, FieldDescriptor, Object, Pair, PgsString, Symbol, Syntax, Type,
+    UnpackedHeapValue, Vector
 };
 use super::state::State;
 use super::util::{fsize, Bool, False};
@@ -46,6 +47,25 @@ impl<T: DynamicType> DynamicDowncast for HeapValue<T> {
     unsafe fn unchecked_downcast(value: Value) -> Self {
         HeapValue { value, _phantom: PhantomData }
     }
+}
+
+// ---
+
+pub trait StatefulDisplay: Sized {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result;
+
+    fn fmt_wrap<'a>(&'a self, state: &'a State) -> StatedDisplay<'a, Self> {
+        StatedDisplay { value: self, state }
+    }
+}
+
+pub struct StatedDisplay<'a, T: StatefulDisplay> {
+    value: &'a T,
+    state: &'a State
+}
+
+impl<'a, T: StatefulDisplay> Display for StatedDisplay<'a, T> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.value.st_fmt(self.state, f) }
 }
 
 // ---
@@ -277,12 +297,12 @@ impl Debug for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "Value({:x})", self.0) }
 }
 
-impl Display for Value {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl StatefulDisplay for Value {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
         use UnpackedValue::*;
 
         match self.unpack() {
-            ORef(v) => Display::fmt(&v, f),
+            ORef(v) => v.st_fmt(state, f),
             Fixnum(n) => Display::fmt(&n, f), // HACK
             Flonum(n) => Display::fmt(&n, f), // HACK
             Char(c) => Display::fmt(&c, f),   // HACK
@@ -647,8 +667,10 @@ impl HeapValue<()> {
             UnpackedHeapValue::Syntax(s)
         } else if let Ok(t) = state.downcast::<Type>(self.into()) {
             UnpackedHeapValue::Type(t)
+        } else if let Ok(t) = state.downcast::<FieldDescriptor>(self.into()) {
+            UnpackedHeapValue::FieldDescriptor(t)
         } else {
-            todo!()
+            UnpackedHeapValue::Other(self.into())
         }
     }
 }
@@ -691,8 +713,10 @@ impl<T: DynamicType<IsFlex = False> + Debug> Debug for HeapValue<T> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { <T as Debug>::fmt(&*self, f) }
 }
 
-impl Display for HeapValue<()> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result { todo!() }
+impl StatefulDisplay for HeapValue<()> {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        self.unpack(state).st_fmt(state, f)
+    }
 }
 
 // ---

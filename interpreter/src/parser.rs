@@ -1,9 +1,9 @@
 use std::convert::TryInto;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Formatter};
 
 use super::lexer::{self, Lexer, Pos, Token};
 use super::objects::Pair;
-use super::refs::{DynamicDowncast, Value};
+use super::refs::{DynamicDowncast, StatefulDisplay, Value};
 use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
@@ -12,8 +12,10 @@ pub struct Loc {
     pub pos: Pos
 }
 
-impl Display for Loc {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{}:{}", self.source, self.pos) }
+impl StatefulDisplay for Loc {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.source.fmt_wrap(state), self.pos)
+    }
 }
 
 #[derive(Debug)]
@@ -36,20 +38,26 @@ pub enum ErrorWhat {
     Eof
 }
 
-impl Display for ErrorWhat {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl StatefulDisplay for ErrorWhat {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
         match self {
             ErrorWhat::Lex(lex_err) => write!(f, "Lexical error: {}.", lex_err),
-            ErrorWhat::Expected { expected, actual } =>
-                write!(f, "Was expecting '{}' but got '{}'.", expected, actual),
-            ErrorWhat::Unexpected(tok) => write!(f, "Unexpected '{}'.", tok),
+            ErrorWhat::Expected { expected, actual } => write!(
+                f,
+                "Was expecting '{}' but got '{}'.",
+                expected.fmt_wrap(state),
+                actual.fmt_wrap(state)
+            ),
+            ErrorWhat::Unexpected(tok) => write!(f, "Unexpected '{}'.", tok.fmt_wrap(state)),
             ErrorWhat::Eof => write!(f, "Incomplete datum, input ran out.")
         }
     }
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "{} at {}", self.what, self.at) }
+impl StatefulDisplay for Error {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{} at {}", self.what.fmt_wrap(state), self.at.fmt_wrap(state))
+    }
 }
 
 pub struct Parser<I: Iterator<Item = char>> {

@@ -13,7 +13,9 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager, ObjectReference};
-use super::refs::{DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, UnpackedValue, Value};
+use super::refs::{
+    DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, StatefulDisplay, UnpackedValue, Value
+};
 use super::state::State;
 use super::util::{False, True};
 
@@ -27,45 +29,24 @@ pub enum UnpackedHeapValue {
     Bindings(Bindings),
     Closure(Closure),
     Syntax(Syntax),
-    Type(Type)
+    Type(Type),
+    FieldDescriptor(FieldDescriptor),
+    Other(Value)
 }
 
-impl Display for UnpackedHeapValue {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            UnpackedHeapValue::Vector(vec) => {
-                write!(f, "#(")?;
-
-                for (i, v) in vec.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ")?;
-                    }
-                    write!(f, "{}", v)?;
-                }
-
-                write!(f, ")")
-            },
-            UnpackedHeapValue::String(s) => write!(f, "{:?}", s),
+impl StatefulDisplay for UnpackedHeapValue {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        match *self {
+            UnpackedHeapValue::String(s) => write!(f, "{}", s),
             UnpackedHeapValue::Symbol(s) => write!(f, "{}", s),
-            UnpackedHeapValue::Pair(p) => todo!() /*{
-                write!(f, "({}", p.car)?;
-
-                let mut cars = Cars::of(p.cdr);
-                for elem in &mut cars {
-                    write!(f, " {}", elem)?;
-                }
-
-                if cars.remainder() != Value::NIL {
-                    write!(f, " . {}", cars.remainder())?;
-                }
-
-                write!(f, ")")
-            }*/,
-            UnpackedHeapValue::Bindings(_) => write!(f, "#<environment>"),
-            UnpackedHeapValue::Closure(_) => write!(f, "#<procedure>"),
-            UnpackedHeapValue::Syntax(so) =>
-                write!(f, "#<syntax @ {}:{}:{} {}>", so.source, so.line, so.column, so.datum),
-            UnpackedHeapValue::Type(t) => write!(f, "{}", t)
+            UnpackedHeapValue::Pair(p) => p.st_fmt(state, f),
+            UnpackedHeapValue::Vector(v) => v.st_fmt(state, f),
+            UnpackedHeapValue::Closure(proc) => write!(f, "{}", proc),
+            UnpackedHeapValue::Bindings(env) => write!(f, "{}", env),
+            UnpackedHeapValue::Syntax(s) => s.st_fmt(state, f),
+            UnpackedHeapValue::Type(t) => write!(f, "{}", t),
+            UnpackedHeapValue::FieldDescriptor(fd) => write!(f, "{}", fd),
+            UnpackedHeapValue::Other(v) => write!(f, "#<instance {}>", state.type_of(v))
         }
     }
 }
@@ -225,6 +206,21 @@ impl Deref for Vector {
 impl DerefMut for Vector {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { (*self.header_mut()).flex_slots_mut() }
+    }
+}
+
+impl StatefulDisplay for Vector {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        write!(f, "#(")?;
+
+        for (i, v) in self.iter().enumerate() {
+            if i > 0 {
+                write!(f, " ")?;
+            }
+            write!(f, "{}", v.fmt_wrap(state))?;
+        }
+
+        write!(f, ")")
     }
 }
 
@@ -465,6 +461,25 @@ impl Pair {
     pub fn new(state: &mut State) -> Option<Self> { state.alloc::<PairData>() }
 }
 
+impl StatefulDisplay for Pair {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        write!(f, "({}", self.car.fmt_wrap(state))?;
+
+        let mut ls = self.cdr;
+
+        while let Ok(p) = state.downcast::<Pair>(ls) {
+            write!(f, " {}", p.car.fmt_wrap(state))?;
+            ls = p.cdr;
+        }
+
+        if ls != Value::NIL {
+            write!(f, " . {}", ls.fmt_wrap(state))?;
+        }
+
+        write!(f, ")")
+    }
+}
+
 // ---
 
 pub type Closure = HeapValue<ClosureData>;
@@ -500,14 +515,16 @@ impl Closure {
             res
         })
     }
-}
 
-impl Closure {
     pub fn clovers(&self) -> &[Value] { unsafe { (*self.header()).flex_slots() } }
 
     pub fn clovers_mut(&mut self) -> &mut [Value] {
         unsafe { (*self.header_mut()).flex_slots_mut() }
     }
+}
+
+impl Display for Closure {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "#<procedure>") }
 }
 
 // ---
@@ -646,12 +663,16 @@ impl Bindings {
 
         for (k, v) in self.keys.iter().zip(self.values.iter()) {
             if *k != Self::VACANT {
-                writeln!(dest, "{} = {}", k, v)?;
+                writeln!(dest, "{} = {}", k.fmt_wrap(state), v.fmt_wrap(state))?;
             }
         }
 
         Ok(())
     }
+}
+
+impl Display for Bindings {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "#<environment>") }
 }
 
 // ---
@@ -726,10 +747,16 @@ impl Value {
     }
 }
 
-impl Display for FieldDescriptor {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let mutability = if self.is_mutable == Value::TRUE { "mutable" } else { "immutable" };
-        write!(f, "({} {} {})", mutability, self.name, self.size)
+impl StatefulDisplay for Syntax {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "#<syntax @ {}:{}:{} {}>",
+            self.source.fmt_wrap(state),
+            self.line.fmt_wrap(state),
+            self.column.fmt_wrap(state),
+            self.datum.fmt_wrap(state)
+        )
     }
 }
 
@@ -884,7 +911,7 @@ impl Display for Type {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "#<type {}", self.name)?;
 
-        for field in self.fields() {
+        for &field in self.fields() {
             write!(f, " {}", field)?;
         }
 
@@ -916,6 +943,13 @@ impl FieldDescriptor {
             *res = FieldDescriptorData { is_mutable: is_mutable.into(), size, name };
             res
         })
+    }
+}
+
+impl Display for FieldDescriptor {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let mutability = if self.is_mutable == Value::TRUE { "mutable" } else { "immutable" };
+        write!(f, "({} {} {})", mutability, self.name, self.size)
     }
 }
 

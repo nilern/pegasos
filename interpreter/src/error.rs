@@ -1,7 +1,9 @@
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Formatter};
 
 use super::interpreter::{RuntimeError, SyntaxError};
 use super::parser;
+use super::refs::StatefulDisplay;
+use super::State;
 
 #[derive(Debug)]
 pub enum PgsError {
@@ -22,12 +24,12 @@ impl From<RuntimeError> for PgsError {
     fn from(err: RuntimeError) -> Self { PgsError::Runtime(err) }
 }
 
-impl Display for PgsError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl StatefulDisplay for PgsError {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
         match self {
-            PgsError::Parse(parse_err) => write!(f, "Parse error: {}", parse_err),
-            PgsError::Syntax(syn_err) => write!(f, "Syntax error: {}", syn_err),
-            PgsError::Runtime(rt_err) => write!(f, "Runtime error: {}", rt_err)
+            PgsError::Parse(parse_err) => write!(f, "Parse error: {}", parse_err.fmt_wrap(state)),
+            PgsError::Syntax(syn_err) => write!(f, "Syntax error: {}", syn_err.fmt_wrap(state)),
+            PgsError::Runtime(rt_err) => write!(f, "Runtime error: {}", rt_err.fmt_wrap(state))
         }
     }
 }

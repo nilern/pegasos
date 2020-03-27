@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 use std::iter::Peekable;
 
 use super::objects::{PgsString, Symbol};
-use super::refs::Value;
+use super::refs::{StatefulDisplay, Value};
 use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
@@ -34,8 +34,8 @@ pub enum Token {
     Const(Value)
 }
 
-impl Display for Token {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl StatefulDisplay for Token {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
         match self {
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
@@ -43,7 +43,7 @@ impl Display for Token {
             Token::Dot => write!(f, "."),
             Token::Quote => write!(f, "'"),
             Token::Identifier(cs) => write!(f, "{}", cs),
-            Token::Const(v) => write!(f, "{}", v)
+            Token::Const(v) => write!(f, "{}", v.fmt_wrap(state))
         }
     }
 }

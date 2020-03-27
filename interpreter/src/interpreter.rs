@@ -1,5 +1,5 @@
 use std::convert::{TryFrom, TryInto};
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Formatter};
 use std::fs;
 use std::io;
 use std::mem::transmute;
@@ -9,14 +9,16 @@ use super::lexer::Lexer;
 use super::objects::{Bindings, Closure, Pair, PgsString, Symbol, Syntax, Type, UnpackedHeapValue};
 use super::parser::Parser;
 use super::primitives;
-use super::refs::{Fixnum, FrameTag, Primop, UnpackedValue, Value};
+use super::refs::{Fixnum, FrameTag, Primop, StatefulDisplay, UnpackedValue, Value};
 use super::state::State;
 
 #[derive(Debug)]
 pub struct SyntaxError(Value);
 
-impl Display for SyntaxError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result { write!(f, "Bad syntax: {}", self.0) }
+impl StatefulDisplay for SyntaxError {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Bad syntax: {}", self.0.fmt_wrap(state))
+    }
 }
 
 #[derive(Debug)]
@@ -34,18 +36,24 @@ pub enum RuntimeError {
     IO(io::Error)
 }
 
-impl Display for RuntimeError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl StatefulDisplay for RuntimeError {
+    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
         match self {
-            RuntimeError::NonObject(value) => write!(f, "{} is not a heap object", value),
+            RuntimeError::NonObject(value) =>
+                write!(f, "{} is not a heap object", value.fmt_wrap(state)),
             RuntimeError::Type { expected, value } =>
-                write!(f, "Type error: {} is not of type {}", value, expected),
+                write!(f, "Type error: {} is not of type {}", value.fmt_wrap(state), expected),
             RuntimeError::FixnumOverflow => write!(f, "fixnum overflow"),
             RuntimeError::FlonumOverflow => write!(f, "flonum overflow"),
-            RuntimeError::Bounds { value, index, len } =>
-                write!(f, "Out of bounds indexing {} of length {} with {}", value, len, index),
+            RuntimeError::Bounds { value, index, len } => write!(
+                f,
+                "Out of bounds indexing {} of length {} with {}",
+                value.fmt_wrap(state),
+                len,
+                index
+            ),
             RuntimeError::Argc { callee, params: (paramc, variadic), got } => {
-                write!(f, "{} expected ", callee)?;
+                write!(f, "{} expected ", callee.fmt_wrap(state))?;
                 if *variadic {
                     write!(f, "at least")?;
                 } else {
@@ -62,7 +70,7 @@ impl Display for RuntimeError {
                 }
                 write!(f, " {} return values but got {}", paramc, got)
             },
-            RuntimeError::Uncallable(v) => write!(f, "{} cannot be called", v),
+            RuntimeError::Uncallable(v) => write!(f, "{} cannot be called", v.fmt_wrap(state)),
             RuntimeError::Unbound(name) => write!(f, "Unbound variable: {}", name),
             RuntimeError::NotInPath(filename) =>
                 write!(f, "File {} not found on *include-path*", filename),

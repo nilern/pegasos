@@ -23,7 +23,7 @@ mod util;
 use interpreter::run;
 use lexer::Lexer;
 use parser::Parser;
-use refs::Value;
+use refs::{StatefulDisplay, Value};
 use state::State;
 
 const PROMPT: &str = "pegasos> ";
@@ -70,12 +70,19 @@ fn main() {
             Ok(()) => match run(&mut state) {
                 Ok(()) => {},
                 Err(err) => {
-                    writeln!(stderr(), "Error loading {}: {}", path.display(), err).unwrap();
+                    writeln!(
+                        stderr(),
+                        "Error loading {}: {}",
+                        path.display(),
+                        err.fmt_wrap(&state)
+                    )
+                    .unwrap();
                     exit(1);
                 }
             },
             Err(err) => {
-                writeln!(stderr(), "Error reading {}: {}", path.display(), err).unwrap();
+                writeln!(stderr(), "Error reading {}: {}", path.display(), err.fmt_wrap(&state))
+                    .unwrap();
                 exit(1);
             }
         }
@@ -90,10 +97,12 @@ fn main() {
                 let mut parser = Parser::new(Lexer::new(line.chars()));
                 match unsafe { parser.sexprs(&mut state, "REPL") } {
                     Ok(()) => match run(&mut state) {
-                        Ok(()) =>
-                            println!("Ack, result: {}", state.pop::<Value>().unwrap().unwrap()),
+                        Ok(()) => println!(
+                            "Ack, result: {}",
+                            state.pop::<Value>().unwrap().unwrap().fmt_wrap(&state)
+                        ),
                         Err(err) => {
-                            println!("Runtime error: {}", err);
+                            println!("Runtime error: {}", err.fmt_wrap(&state));
 
                             if debug {
                                 println!("");
@@ -102,7 +111,7 @@ fn main() {
                             }
                         }
                     },
-                    Err(err) => println!("Parse error: {}", err)
+                    Err(err) => println!("Parse error: {}", err.fmt_wrap(&state))
                 }
             },
             Err(ReadlineError::Interrupted) => {
