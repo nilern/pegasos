@@ -21,6 +21,7 @@ impl Display for SyntaxError {
 
 #[derive(Debug)]
 pub enum RuntimeError {
+    NonObject(Value),
     Type { expected: Type, value: Value },
     FixnumOverflow,
     FlonumOverflow,
@@ -36,6 +37,7 @@ pub enum RuntimeError {
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
+            RuntimeError::NonObject(value) => write!(f, "{} is not a heap object", value),
             RuntimeError::Type { expected, value } =>
                 write!(f, "Type error: {} is not of type {}", value, expected),
             RuntimeError::FixnumOverflow => write!(f, "fixnum overflow"),

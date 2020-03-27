@@ -85,7 +85,7 @@ impl Header {
 
     fn new() -> Self { Self(unsafe { transmute::<usize, Value>(Self::BAD_HASH) }) }
 
-    fn from_hash(hash: usize) -> Self { Self(Value::try_from(hash).unwrap()) }
+    pub fn from_hash(hash: usize) -> Self { Self(Value::try_from(hash).unwrap()) }
 
     fn identity_hash(&mut self) -> usize {
         if self.0 != unsafe { transmute::<usize, Value>(Self::BAD_HASH) } {
@@ -98,7 +98,7 @@ impl Header {
                 hash = 0xbad0;
             }
             self.0 = unsafe { transmute::<usize, Value>(hash) };
-            hash
+            hash >> Value::SHIFT
         }
     }
 
@@ -112,8 +112,8 @@ impl Header {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Object {
-    header: Header,
-    typ: Type
+    pub header: Header,
+    pub typ: Type
 }
 
 impl Object {
@@ -776,14 +776,14 @@ impl TypeData {
         unsafe { (*((self as *const TypeData).add(1) as *const Fixnum)).into() }
     }
 
-    fn fields(&self) -> &[FieldDescriptor] {
+    pub fn fields(&self) -> &[FieldDescriptor] {
         unsafe {
             let len_ptr = (self as *const TypeData).add(1) as *const Fixnum;
             slice::from_raw_parts(len_ptr.add(1) as *const FieldDescriptor, (*len_ptr).into())
         }
     }
 
-    fn fields_mut(&mut self) -> &mut [FieldDescriptor] {
+    pub fn fields_mut(&mut self) -> &mut [FieldDescriptor] {
         unsafe {
             let len_ptr = (self as *mut TypeData).add(1) as *mut Fixnum;
             slice::from_raw_parts_mut(len_ptr.add(1) as *mut FieldDescriptor, (*len_ptr).into())
@@ -911,7 +911,7 @@ impl DynamicType for FieldDescriptorData {
 }
 
 impl FieldDescriptor {
-    fn new(state: &mut State, is_mutable: bool, size: Fixnum, name: Symbol) -> Option<Self> {
+    pub fn new(state: &mut State, is_mutable: bool, size: Fixnum, name: Symbol) -> Option<Self> {
         state.alloc::<FieldDescriptorData>().map(|mut res| {
             *res = FieldDescriptorData { is_mutable: is_mutable.into(), size, name };
             res

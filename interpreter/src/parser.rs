@@ -345,8 +345,6 @@ impl<I: Iterator<Item = char>> Parser<I> {
 mod tests {
     use super::*;
 
-    use std::convert::{TryFrom, TryInto};
-
     use super::super::objects::{Symbol, Syntax, Vector};
 
     #[test]

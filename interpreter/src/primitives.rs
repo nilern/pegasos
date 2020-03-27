@@ -3,8 +3,8 @@ use std::mem::transmute;
 
 use super::error::PgsError;
 use super::interpreter::{Op, RuntimeError};
-use super::objects::{Closure, Pair, Symbol, Syntax, Type, Vector};
-use super::refs::{DynamicDowncast, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
+use super::objects::{Closure, Pair, Symbol, Syntax, Vector};
+use super::refs::{Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
 use super::state::State;
 
 pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
@@ -39,7 +39,7 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         BitCount => bit_count(state),
         MakeSyntax => make_syntax(state),
         MakeType => make_type(state),
-        ImmediateType => immediate_type(state)
+        Type => typ(state)
     }
 }
 
@@ -426,8 +426,8 @@ primitive! { make_type state (is_bytes: bool, is_flex: bool, name: Symbol, paren
 */
 }}
 
-primitive! { immediate_type state (v: Value) {
-    let typ = state.immediate_type(v);
+primitive! { typ state (v: Value) {
+    let typ = state.type_of(v);
     state.push(typ);
     state.push(1u16);
     Ok(Op::Continue)

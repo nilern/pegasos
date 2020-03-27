@@ -16,7 +16,36 @@
       (##slot-set! vec i v)
       (error "vector-set!: not a vector"))))
 
-(define vector-copy! ##vector-copy!)
+(define vector-copy!
+  (let* ((vector-copy-forward!
+           (lambda (to at from start end)
+             (let* ((copy! #f))
+               (begin
+                 (set! copy! (lambda (at start)
+                               (if (fx< start end)
+                                 (begin
+                                   (vector-set! to at (vector-ref from start))
+                                   (copy! (fx+ at 1) (fx+ start 1)))
+                                 (void))))
+                 (copy! at start)))))
+
+         (vector-copy-backward!
+           (lambda (to at from start end)
+             (let* ((copy! #f))
+               (begin
+                 (set! copy! (lambda (at last)
+                               (if (fx<= start last)
+                                 (begin
+                                   (vector-set! to at (vector-ref from last))
+                                   (copy! (fx- at 1) (fx- start 1)))
+                                 (void))))
+                 (copy! (fx- (fx+ at (fx- end start)) 1) (fx- end 1)))))))
+    (lambda (to at from start end)
+      (if (not (eq? to from))
+        (vector-copy-forward! to at from start end)
+        (if (fx< at start)
+          (vector-copy-forward! to at from start end)
+          (vector-copy-backward! to at from start end))))))
 
 (define vector-set
   (lambda (vec i v)

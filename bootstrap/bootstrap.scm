@@ -16,24 +16,12 @@
 (define bit-count ##bit-count)
 (define arithmetic-shift ##arithmetic-shift)
 
-(define symbol?
-  (lambda (v)
-    (if (eq? (##immediate-tag v) 1)
-      (eq? (##heap-tag v) 1)
-      #f)))
-
-(define vector?
-  (lambda (v)
-    (if (eq? (##immediate-tag v) 1)
-      (eq? (##heap-tag v) 3)
-      #f)))
-
 (define make-vector ##make-vector)
 
+(include "type.scm")
 (include "list.scm")
 (include "vector.scm")
 (include "records.scm")
-(include "type.scm")
 (include "comparator.scm")
 (include "hash-table.scm")
 (include "set.scm")

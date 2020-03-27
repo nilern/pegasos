@@ -54,7 +54,7 @@ impl<T: DynamicType> DynamicDowncast for HeapValue<T> {
 // allocation to pay for. 32-bit might have a somewhat bad time but if you are
 // still on 32-bit you already have a bad time, anyway.
 
-#[derive(Debug, PartialEq, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, EnumIter)]
 #[repr(usize)]
 pub enum Tag {
     Fixnum = 0, // i29 | i61, 0 => less fiddly arithmetic
@@ -476,7 +476,7 @@ impl Display for Fixnum {
 pub enum Primop {
     Void = 0 << Value::SHIFT | Tag::Fixnum as usize,
     Eq = 1 << Value::SHIFT | Tag::Fixnum as usize,
-    ImmediateType = 2 << Value::SHIFT | Tag::Fixnum as usize,
+    Type = 2 << Value::SHIFT | Tag::Fixnum as usize,
     IdentityHash = 3 << Value::SHIFT | Tag::Fixnum as usize,
     Call = 4 << Value::SHIFT | Tag::Fixnum as usize,
     Apply = 5 << Value::SHIFT | Tag::Fixnum as usize,
@@ -539,7 +539,7 @@ impl Display for Primop {
             BitCount => write!(f, "bit-count"),
             MakeSyntax => write!(f, "make-syntax"),
             MakeType => write!(f, "make-type"),
-            ImmediateType => write!(f, "immediate-type")
+            Type => write!(f, "type")
         }
     }
 }
@@ -674,7 +674,7 @@ impl TryFrom<Value> for HeapValue<()> {
         if value.has_tag(Tag::ORef) {
             Ok(Self { value, _phantom: PhantomData })
         } else {
-            todo!()
+            Err(RuntimeError::NonObject(value))
         }
     }
 }

@@ -11,8 +11,8 @@ use super::error::PgsError;
 use super::gc::MemoryManager;
 use super::interpreter::RuntimeError;
 use super::objects::{
-    Bindings, BindingsData, Closure, ClosureData, FieldDescriptor, FieldDescriptorData, Object,
-    Pair, PairData, PgsString, PgsStringData, Symbol, SymbolData, SymbolTable, Syntax,
+    Bindings, BindingsData, Closure, ClosureData, FieldDescriptor, FieldDescriptorData, Header,
+    Object, Pair, PairData, PgsString, PgsStringData, Symbol, SymbolData, SymbolTable, Syntax,
     SyntaxObject, Type, TypeData, Vector, VectorData
 };
 use super::parser::Loc;
@@ -93,9 +93,21 @@ impl State {
         }
 
         fn new_builtin_type<T: DynamicType>(
-            state: &mut State, name: Symbol, fields: &[FieldDescriptor]
+            state: &mut State, name: &str, fields: &[(bool, Fixnum, &str)]
         ) -> Type {
+            assert!(
+                fields.len() == size_of::<T>() / size_of::<Value>() + T::IsFlex::reify() as usize
+            );
+
+            let name = Symbol::new(state, &format!("<{}>", name)).unwrap();
             let is_flex = T::IsFlex::reify();
+            let fields: Vec<FieldDescriptor> = fields
+                .iter()
+                .map(|(mutable, size, name)| {
+                    let name = Symbol::new(state, name).unwrap();
+                    FieldDescriptor::new(state, *mutable, *size, name).unwrap()
+                })
+                .collect();
             Type::new(
                 state,
                 T::IsBytes::reify(),
@@ -103,7 +115,7 @@ impl State {
                 name,
                 None,
                 (size_of::<T>() + is_flex as usize * size_of::<Fixnum>()).try_into().unwrap(),
-                fields
+                &fields
             )
             .unwrap()
         }
@@ -140,15 +152,41 @@ impl State {
                     .unwrap();
             res.object_types.named.typ = typ;
 
-            let symbol = new_pretype::<SymbolData>(&mut res, typ);
             let field_descriptor = new_pretype::<FieldDescriptorData>(&mut res, typ);
+            res.object_types.named.field_descriptor = field_descriptor;
+            let symbol = new_pretype::<SymbolData>(&mut res, typ);
+            res.object_types.named.symbol = symbol;
 
-            let string = new_pretype::<PgsStringData>(&mut res, typ);
-            let pair = new_pretype::<PairData>(&mut res, typ);
-            let vector = new_pretype::<VectorData>(&mut res, typ);
-            let procedure = new_pretype::<ClosureData>(&mut res, typ);
-            let environment = new_pretype::<BindingsData>(&mut res, typ);
-            let syntax = new_pretype::<SyntaxObject>(&mut res, typ);
+            let value_size: Fixnum = size_of::<Value>().try_into().unwrap();
+            let byte_size: Fixnum = size_of::<u8>().try_into().unwrap();
+
+            let string = new_builtin_type::<PgsStringData>(&mut res, "string", &[(
+                true, byte_size, "bytes"
+            )]);
+            let pair = new_builtin_type::<PairData>(&mut res, "pair", &[
+                (true, value_size, "car"),
+                (true, value_size, "cdr")
+            ]);
+            let vector = new_builtin_type::<VectorData>(&mut res, "vector", &[(
+                true, value_size, "elements"
+            )]);
+            let procedure = new_builtin_type::<ClosureData>(&mut res, "procedure", &[
+                (false, value_size, "code"),
+                (false, value_size, "clovers")
+            ]);
+            let syntax = new_builtin_type::<SyntaxObject>(&mut res, "syntax", &[
+                (false, value_size, "datum"),
+                (false, value_size, "scopes"),
+                (false, value_size, "source"),
+                (false, value_size, "line"),
+                (false, value_size, "column")
+            ]);
+            let environment = new_builtin_type::<BindingsData>(&mut res, "environment", &[
+                (false, value_size, "parent"),
+                (true, value_size, "keys"),
+                (true, value_size, "values"),
+                (true, value_size, "occupancy")
+            ]);
 
             res.object_types.named = BuiltinObjectTypesStruct {
                 string,
@@ -162,19 +200,66 @@ impl State {
                 field_descriptor
             };
 
-            // FIXME: Fill out names and field descriptors of builtin object types
+            res.object_types.named.typ.name = Symbol::new(&mut res, "<type>").unwrap();
+            let is_bytes_symbol = Symbol::new(&mut res, "bytes?").unwrap();
+            let is_flex_symbol = Symbol::new(&mut res, "flex?").unwrap();
+            let name_symbol = Symbol::new(&mut res, "name").unwrap();
+            let parent_symbol = Symbol::new(&mut res, "parent").unwrap();
+            let min_size_symbol = Symbol::new(&mut res, "min-size").unwrap();
+            let fields_symbol = Symbol::new(&mut res, "fields").unwrap();
+            let type_fields = [
+                FieldDescriptor::new(&mut res, false, value_size, is_bytes_symbol).unwrap(),
+                FieldDescriptor::new(&mut res, false, value_size, is_flex_symbol).unwrap(),
+                FieldDescriptor::new(&mut res, false, value_size, name_symbol).unwrap(),
+                FieldDescriptor::new(&mut res, false, value_size, parent_symbol).unwrap(),
+                FieldDescriptor::new(&mut res, false, value_size, min_size_symbol).unwrap(),
+                FieldDescriptor::new(&mut res, false, value_size, fields_symbol).unwrap()
+            ];
+            res.object_types.named.typ.fields_mut().copy_from_slice(&type_fields);
+
+            res.object_types.named.field_descriptor.name =
+                Symbol::new(&mut res, "<field-descriptor>").unwrap();
+            let mutable_symbol = Symbol::new(&mut res, "mutable").unwrap();
+            let size_symbol = Symbol::new(&mut res, "size").unwrap();
+            let field_descriptor_fields = [
+                FieldDescriptor::new(&mut res, false, value_size, mutable_symbol).unwrap(),
+                FieldDescriptor::new(&mut res, false, value_size, size_symbol).unwrap(),
+                FieldDescriptor::new(&mut res, false, value_size, name_symbol).unwrap()
+            ];
+            res.object_types
+                .named
+                .field_descriptor
+                .fields_mut()
+                .copy_from_slice(&field_descriptor_fields);
+
+            res.object_types.named.symbol.name = Symbol::new(&mut res, "<symbol>").unwrap();
+            let hash_symbol = Symbol::new(&mut res, "hash").unwrap();
+            let symbol_fields = [
+                FieldDescriptor::new(
+                    &mut res,
+                    false,
+                    (size_of::<u64>() as u16).into(),
+                    hash_symbol
+                )
+                .unwrap(),
+                FieldDescriptor::new(&mut res, false, byte_size.into(), name_symbol).unwrap()
+            ];
+            res.object_types.named.symbol.fields_mut().copy_from_slice(&symbol_fields);
 
             res.env = Bindings::new(&mut res, None).unwrap();
 
-            // FIXME: Make identity hashes of these equal the tags:
+            for &typ in res.object_types.indexed.clone().iter() {
+                res.env.insert(&mut res, Type::unchecked_downcast(typ).name, typ).unwrap();
+            }
+
             for tag in Tag::iter() {
                 if tag != Tag::ORef {
                     let name = Symbol::new(&mut res, &format!("{}", tag)).unwrap();
                     // TODO: Make these not total lies:
-                    let typ =
-                        Type::new(&mut res, true, false, name, None, 0.into(), &[]).unwrap().into();
-                    res.immediate_types[tag as usize] = typ;
-                    res.env.insert(&mut res, name, typ).unwrap();
+                    let typ = Type::new(&mut res, true, false, name, None, 0.into(), &[]).unwrap();
+                    (*typ.header_mut()).header = Header::from_hash(tag as usize);
+                    res.immediate_types[tag as usize] = typ.into();
+                    res.env.insert(&mut res, name, typ.into()).unwrap();
                 }
             }
 
@@ -558,8 +643,6 @@ impl<'a> Iterator for Frames<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::convert::TryFrom;
 
     #[test]
     fn test_gc() {
