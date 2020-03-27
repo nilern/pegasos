@@ -540,6 +540,21 @@ impl State {
         self.symbol_table.get(&mut self.heap, symbol_t, name)
     }
 
+    // TODO: Get print names straight
+    pub unsafe fn gensym(&mut self, name: Symbol) {
+        let hash = name.hash;
+        let symbol_t = self.types().symbol;
+        let s =
+            Symbol::create(&mut self.heap, symbol_t, hash, name.as_str()).unwrap_or_else(|| {
+                self.push(name);
+                self.collect_garbage();
+                let name = Symbol::unchecked_downcast(self.pop().unwrap().unwrap());
+                let symbol_t = self.types().symbol;
+                Symbol::create(&mut self.heap, symbol_t, hash, name.as_str()).unwrap()
+            });
+        self.push(s);
+    }
+
     pub fn push_env(&mut self) { self.push(self.env) }
 
     pub fn env(&self) -> Bindings { self.env }

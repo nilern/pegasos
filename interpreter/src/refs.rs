@@ -475,7 +475,9 @@ impl Shr for Fixnum {
 }
 
 impl PartialOrd for Fixnum {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { ((self.0).0 as isize).partial_cmp(&((other.0).0 as isize)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        ((self.0).0 as isize).partial_cmp(&((other.0).0 as isize))
+    }
 
     fn lt(&self, other: &Self) -> bool { ((self.0).0 as isize).lt(&((other.0).0 as isize)) }
     fn le(&self, other: &Self) -> bool { ((self.0).0 as isize).le(&((other.0).0 as isize)) }
@@ -522,7 +524,8 @@ pub enum Primop {
     MakeType = 30 << Value::SHIFT | Tag::Fixnum as usize,
     FlexLength = 31 << Value::SHIFT | Tag::Fixnum as usize,
     FlexRef = 32 << Value::SHIFT | Tag::Fixnum as usize,
-    FlexSet = 33 << Value::SHIFT | Tag::Fixnum as usize
+    FlexSet = 33 << Value::SHIFT | Tag::Fixnum as usize,
+    Gensym = 34 << Value::SHIFT | Tag::Fixnum as usize
 }
 
 impl Display for Primop {
@@ -559,7 +562,8 @@ impl Display for Primop {
             Type => write!(f, "type"),
             FlexLength => write!(f, "flex-length"),
             FlexRef => write!(f, "flex-ref"),
-            FlexSet => write!(f, "flex-set!")
+            FlexSet => write!(f, "flex-set!"),
+            Gensym => write!(f, "gensym")
         }
     }
 }

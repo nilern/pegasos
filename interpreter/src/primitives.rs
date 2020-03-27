@@ -4,7 +4,7 @@ use std::mem::transmute;
 use super::error::PgsError;
 use super::interpreter::{Op, RuntimeError};
 use super::objects::{Closure, Pair, Symbol, Syntax, Vector};
-use super::refs::{Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
+use super::refs::{DynamicDowncast, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
 use super::state::State;
 
 pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
@@ -39,7 +39,8 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         Type => typ(state),
         FlexLength => flex_length(state),
         FlexRef => flex_ref(state),
-        FlexSet => flex_set(state)
+        FlexSet => flex_set(state),
+        Gensym => gensym(state)
     }
 }
 
@@ -432,4 +433,10 @@ primitive! { flex_set state (v: Value, i: usize, elem: Value) {
     }
 
     Err(RuntimeError::Inflexible(v).into())
+}}
+
+primitive! { gensym state (s: Symbol) {
+    unsafe { state.gensym(s) };
+    state.push(1u16);
+    Ok(Op::Continue)
 }}

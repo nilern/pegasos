@@ -16,6 +16,7 @@
 
 (define list (lambda xs xs))
 
+(define caar (lambda (ls) (car (car ls))))
 (define cadr (lambda (ls) (car (cdr ls))))
 
 (define for-each
@@ -41,4 +42,14 @@
         (loop ls acc)))))
 
 (define length (lambda (ls) (fold (lambda (_ len) (fx+ len 1)) 0 ls)))
+
+(define assq
+  (lambda (obj ls)
+    (if (pair? ls)
+      (if (eq? (caar ls) obj)
+        (car ls)
+        (assq obj (cdr ls)))
+      (if (null? ls)
+        #f
+        (error "memq: improper list: " ls)))))
 

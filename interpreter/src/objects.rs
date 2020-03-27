@@ -309,7 +309,7 @@ impl DerefMut for Symbol {
 impl Symbol {
     pub fn new(state: &mut State, name: &str) -> Option<Self> { state.get_symbol(name) }
 
-    fn create(
+    pub fn create(
         heap: &mut MemoryManager<Object>, symbol_t: Type, hash: u64, name: &str
     ) -> Option<Self> {
         heap.alloc(

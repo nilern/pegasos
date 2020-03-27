@@ -108,3 +108,24 @@
 
 (define introduce (lambda (s) (add-scope s core-scope)))
 
+;;;; # Expansion Env
+
+;;; OPTIMIZE: Something better than alists, e.g. HAMT
+
+(define empty-env '())
+
+(define variable (gensym 'variable))
+
+(define env-extend (lambda (env binding v) (cons (cons binding v) env)))
+
+(define env-lookup
+  (lambda (env binding)
+    (let* ((kv (assq binding env)))
+      (if kv (car kv) kv))))
+
+(define add-local-binding!
+  (lambda (id)
+    (let* ((binding (gensym (syntax-e id))))
+      (add-binding! id binding)
+      binding)))
+

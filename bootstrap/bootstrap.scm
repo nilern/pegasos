@@ -19,6 +19,8 @@
 
 (define make-vector ##make-vector)
 
+(define gensym ##gensym)
+
 (include "type.scm")
 (include "list.scm")
 (include "vector.scm")
