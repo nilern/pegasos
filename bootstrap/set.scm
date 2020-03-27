@@ -41,12 +41,18 @@
 
 (define %empty-trie (%bitmap-node 0 #()))
 
+;; OPTIMIZE
 (define set
-  (lambda (comparator)
-    (%hash-set (comparator-equality-predicate comparator) (comparator-hash-function comparator)
-               %empty-trie 0)))
+  (lambda (comparator . elements)
+    (fold (lambda (v set) (set-adjoin set v))
+      (%hash-set (comparator-equality-predicate comparator) (comparator-hash-function comparator)
+        %empty-trie 0)
+      elements)))
 
-(define set-eq (lambda () (%hash-set eq? ##identity-hash %empty-trie 0)))
+;; OPTIMIZE
+(define set-eq
+  (let* ((comparator (make-comparator (lambda (_) #t) eq? #f ##identity-hash)))
+    (lambda args (apply set comparator args))))
 
 (define %hash-set-trie-member
   (lambda (equality trie element default hash shift)
@@ -152,6 +158,19 @@
 (define set<=?
   (lambda (set1 set2)
     (set-every? (lambda (elem) (set-member set2 elem #f)) set1)))
+
+(define %hash-set-trie-fold
+  (lambda (f acc trie)
+    (if (%bitmap-node? trie)
+      (vector-fold (lambda (acc node) (%hash-set-trie-fold f acc node))
+                   acc (%bitmap-node-nodes trie))
+      (if (%collision-node? trie)
+        (vector-fold (lambda (acc v) (f v acc)) acc (%collision-node-vals trie))
+        (f trie acc)))))
+
+(define set-fold (lambda (f acc set) (%hash-set-trie-fold f acc (%hash-set-trie set))))
+
+(define set-for-each (lambda (f set) (set-fold (lambda (v _) (f v)) (void) set)))
 
 (define %hash-set-trie-every
   (lambda (pred trie)

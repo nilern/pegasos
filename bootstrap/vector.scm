@@ -71,6 +71,17 @@
         (vector-copy! vec* i vec (fx+ i 1) (vector-length vec))
         vec*))))
 
+(define vector-fold
+  (lambda (f acc vec)
+    (let* ((len (vector-length vec))
+           (loop #f))
+      (begin
+        (set! loop (lambda (acc i)
+                     (if (fx<? i len)
+                       (loop (f acc (vector-ref vec i)) (fx+ i 1))
+                       acc)))
+        (loop acc 0)))))
+
 (define vector-map
   (lambda (f vec)
     (let* ((len (vector-length vec))

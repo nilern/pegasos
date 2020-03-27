@@ -96,3 +96,15 @@
             (hash-table-ref %all-bindings max-id (lambda () (error "unreachable")))))
         #f))))
 
+;;;; # Kernel
+
+(define core-scope (scope))
+
+(define core-forms (set-eq 'lambda 'let-syntax 'quote 'syntax))
+
+(set-for-each
+  (lambda (form) (add-binding! (make-syntax form (set-eq core-scope) "#<special-form>" 1 1) form))
+  core-forms)
+
+(define introduce (lambda (s) (add-scope s core-scope)))
+
