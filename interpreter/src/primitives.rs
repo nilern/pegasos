@@ -19,11 +19,11 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         CallWithValues => call_with_values(state),
         Values => values(state),
         SymbolHash => symbol_hash(state),
-        ImmediateTypeIndex => immediate_tag(state),
+        Tag => tag(state),
         Length => object_length(state),
         SlotRef => slot_ref(state),
         SlotSet => slot_set(state),
-        Record => record(state),
+        Make => make(state),
         Cons => cons(state),
         Car => car(state),
         Cdr => cdr(state),
@@ -198,7 +198,7 @@ primitive! { symbol_hash state (v: Symbol) {
     Ok(Op::Continue)
 }}
 
-primitive! { immediate_tag state (v: Value) {
+primitive! { tag state (v: Value) {
     state.push(v.tag() as u16);
     state.push(1u16);
     Ok(Op::Continue)
@@ -370,14 +370,11 @@ primitive! { bit_count state (n: Fixnum) {
     Ok(Op::Continue)
 }}
 
-fn record(state: &mut State) -> Result<Op, PgsError> {
+fn make(state: &mut State) -> Result<Op, PgsError> {
     let argc: usize = state.pop().unwrap()?;
 
     if argc > 0 {
-        /*unsafe {
-            state.record(argc);
-        }*/
-        todo!();
+        unsafe { state.make(argc - 1) };
         state.remove(1).unwrap(); // callee
         state.push(1u16);
         Ok(Op::Continue)
@@ -407,24 +404,19 @@ primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line
     Ok(Op::Continue)
 }}
 
-primitive! { make_type state (is_bytes: bool, is_flex: bool, name: Symbol, parent: Value, fields: Vector) {
-    todo!()
-/*
-    let typ = Type::new(state, is_bytes, is_flex, name, Some(parent), todo!(), &fields).unwrap_or_else(|| {
-        state.push(parent);
-        state.push(name);
-        state.push(fields);
-        unsafe { state.collect_garbage(); }
-        let fields = unsafe { Vector::unchecked_downcast(state.pop().unwrap().unwrap()) };
-        let name = unsafe { Symbol::unchecked_downcast(state.pop().unwrap().unwrap()) };
-        let parent = state.pop().unwrap().unwrap();
-        Type::new(state, is_bytes, is_flex, name, Some(parent), todo!(), &fields).unwrap()
-    });
-    state.push(typ);
-    state.push(1u16);
-    Ok(Op::Continue)
-*/
-}}
+fn make_type(state: &mut State) -> Result<Op, PgsError> {
+    let argc: usize = state.pop().unwrap()?;
+
+    if argc >= 4 {
+        unsafe { state.make_type(argc - 4)? };
+        state.remove(1).unwrap(); // callee
+        state.push(1u16);
+        Ok(Op::Continue)
+    } else {
+        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (4, true), got: argc }
+            .into())
+    }
+}
 
 primitive! { typ state (v: Value) {
     let typ = state.type_of(v);

@@ -6,10 +6,12 @@
                        (car args)))
              (fields (vector-map (lambda (fieldspec)
                                    (if (symbol? fieldspec)
-                                     (list 'mutable fieldspec)
-                                     fieldspec))
+                                     (##make <field-descriptor> #t 8 fieldspec)
+                                     (##make <field-descriptor>
+                                       (eq? 'mutable (car fieldspec)) 8
+                                       (cadr fieldspec))))
                                   fieldspecs)))
-        (##make-type parent name fields))
+        (apply ##make-type #f #f name parent (vector->list fields)))
       (error "make-rtd: name is not a symbol" name))))
 
 (define rtd-constructor

@@ -453,17 +453,87 @@ impl State {
         Ok(())
     }
 
-    /*
-        pub unsafe fn record(&mut self, len: usize) {
-            let mut res = Record::new(self, len).unwrap_or_else(|| {
-                self.collect_garbage();
-                Record::new(self, len).unwrap()
-            });
-            res.slots_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
-            self.stack.truncate(self.stack.len() - len);
-            self.push(res);
+    pub unsafe fn make_type(&mut self, field_count: usize) -> Result<(), RuntimeError> {
+        let is_bytes: bool = self.downcast(self.get(field_count + 3).unwrap())?;
+        let is_flex: bool = self.downcast(self.get(field_count + 2).unwrap())?;
+        let name: Symbol = self.downcast(self.get(field_count + 1).unwrap())?;
+        let parent = self.get(field_count).unwrap();
+        let parent =
+            if parent == Value::FALSE { None } else { Some(self.downcast::<Type>(parent)?.into()) };
+
+        if !is_bytes {
+            if !is_flex {
+                let min_size = (field_count * size_of::<Value>()).try_into()?;
+
+                let t = Type::new(
+                    self,
+                    is_bytes,
+                    is_flex,
+                    name,
+                    parent,
+                    min_size,
+                    transmute::<&[Value], &[FieldDescriptor]>(
+                        &self.stack[self.stack.len() - field_count..]
+                    ) // FIXME
+                )
+                .unwrap_or_else(|| {
+                    self.collect_garbage();
+
+                    let name = Symbol::unchecked_downcast(self.get(field_count - 1).unwrap());
+                    let parent = self.get(field_count).unwrap();
+                    let parent = if parent == Value::FALSE { None } else { Some(parent) };
+
+                    Type::new(
+                        self,
+                        is_bytes,
+                        is_flex,
+                        name,
+                        parent,
+                        min_size,
+                        transmute::<&[Value], &[FieldDescriptor]>(
+                            &self.stack[self.stack.len() - field_count..]
+                        ) // FIXME
+                    )
+                    .unwrap()
+                });
+                self.stack.truncate(self.stack.len() - field_count - 4);
+                self.push(t);
+                Ok(())
+            } else {
+                todo!()
+            }
+        } else {
+            todo!()
         }
-    */
+    }
+
+    pub unsafe fn make(&mut self, len: usize) -> Result<(), RuntimeError> {
+        let t: Type = self.downcast(self.get(len).unwrap())?;
+
+        if t.is_bytes == Value::FALSE {
+            if t.is_flex == Value::FALSE {
+                assert!(len == t.fields().len());
+
+                let mut res = HeapValue::<()>::unchecked_downcast(
+                    self.heap.alloc(Object::new(t), len * size_of::<Value>()).unwrap_or_else(
+                        || {
+                            self.collect_garbage();
+                            let t = Type::unchecked_downcast(self.get(len).unwrap());
+                            self.heap.alloc(Object::new(t), len * size_of::<Value>()).unwrap()
+                        }
+                    )
+                );
+                res.slots_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
+                self.stack.truncate(self.stack.len() - len - 1);
+                self.push(res);
+                Ok(())
+            } else {
+                todo!()
+            }
+        } else {
+            todo!()
+        }
+    }
 
     pub fn get_symbol(&mut self, name: &str) -> Option<Symbol> {
         let symbol_t = self.types().symbol;

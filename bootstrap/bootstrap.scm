@@ -23,7 +23,7 @@
 (include "vector.scm")
 (include "records.scm")
 (include "comparator.scm")
-;(include "hash-table.scm")
-;(include "set.scm")
-;(include "expander.scm")
+(include "hash-table.scm")
+(include "set.scm")
+(include "expander.scm")
 
