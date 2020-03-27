@@ -9,6 +9,7 @@
 (define not (lambda (v) (eq? v #f)))
 
 (define fx<? ##fx<?)
+(define fx<=? ##fx<=?)
 (define fx+ ##fx+)
 (define fx- ##fx-)
 (define bitwise-and ##bitwise-and)
@@ -21,9 +22,9 @@
 (include "type.scm")
 (include "list.scm")
 (include "vector.scm")
-;(include "records.scm")
-;(include "comparator.scm")
-;(include "hash-table.scm")
-;(include "set.scm")
-;(include "expander.scm")
+(include "records.scm")
+(include "comparator.scm")
+(include "hash-table.scm")
+(include "set.scm")
+(include "expander.scm")
 

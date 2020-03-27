@@ -475,12 +475,12 @@ impl Shr for Fixnum {
 }
 
 impl PartialOrd for Fixnum {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { (self.0).0.partial_cmp(&(other.0).0) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { ((self.0).0 as isize).partial_cmp(&((other.0).0 as isize)) }
 
-    fn lt(&self, other: &Self) -> bool { (self.0).0.lt(&(other.0).0) }
-    fn le(&self, other: &Self) -> bool { (self.0).0.le(&(other.0).0) }
-    fn gt(&self, other: &Self) -> bool { (self.0).0.gt(&(other.0).0) }
-    fn ge(&self, other: &Self) -> bool { (self.0).0.ge(&(other.0).0) }
+    fn lt(&self, other: &Self) -> bool { ((self.0).0 as isize).lt(&((other.0).0 as isize)) }
+    fn le(&self, other: &Self) -> bool { ((self.0).0 as isize).le(&((other.0).0 as isize)) }
+    fn gt(&self, other: &Self) -> bool { ((self.0).0 as isize).gt(&((other.0).0 as isize)) }
+    fn ge(&self, other: &Self) -> bool { ((self.0).0 as isize).ge(&((other.0).0 as isize)) }
 }
 
 impl Display for Fixnum {
@@ -507,8 +507,9 @@ pub enum Primop {
     SlotRef = 11 << Value::SHIFT | Tag::Fixnum as usize,
     SlotSet = 12 << Value::SHIFT | Tag::Fixnum as usize,
     Make = 13 << Value::SHIFT | Tag::Fixnum as usize,
-    MakeVector = 17 << Value::SHIFT | Tag::Fixnum as usize,
-    FxLt = 18 << Value::SHIFT | Tag::Fixnum as usize,
+    MakeVector = 16 << Value::SHIFT | Tag::Fixnum as usize,
+    FxLt = 17 << Value::SHIFT | Tag::Fixnum as usize,
+    FxLe = 18 << Value::SHIFT | Tag::Fixnum as usize,
     FxAdd = 19 << Value::SHIFT | Tag::Fixnum as usize,
     FxSub = 20 << Value::SHIFT | Tag::Fixnum as usize,
     FxMul = 21 << Value::SHIFT | Tag::Fixnum as usize,
@@ -544,6 +545,7 @@ impl Display for Primop {
             Make => write!(f, "make"),
             MakeVector => write!(f, "make-vector"),
             FxLt => write!(f, "fx<?"),
+            FxLe => write!(f, "fx<=?"),
             FxAdd => write!(f, "fx+"),
             FxSub => write!(f, "fx-"),
             FxMul => write!(f, "fx*"),

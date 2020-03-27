@@ -1,4 +1,4 @@
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::mem::transmute;
 
 use super::error::PgsError;
@@ -25,6 +25,7 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         Make => make(state),
         MakeVector => make_vector(state),
         FxLt => fx_lt(state),
+        FxLe => fx_le(state),
         FxAdd => fx_add(state),
         FxSub => fx_sub(state),
         FxMul => fx_mul(state),
@@ -254,6 +255,12 @@ fn make_vector(state: &mut State) -> Result<Op, PgsError> {
 
 primitive! { fx_lt state (a: Fixnum, b: Fixnum) {
     state.push(a < b);
+    state.push(1u16);
+    Ok(Op::Continue)
+}}
+
+primitive! { fx_le state (a: Fixnum, b: Fixnum) {
+    state.push(a <= b);
     state.push(1u16);
     Ok(Op::Continue)
 }}

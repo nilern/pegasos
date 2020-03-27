@@ -16,10 +16,10 @@
 
 (define rtd-constructor
   (lambda (rtd)
-    (let* ((arity (vector-length (##slot-ref rtd 2))))
+    (let* ((arity (##flex-length rtd)))
       (lambda fieldvs ; OPTIMIZE
         (if (eq? (length fieldvs) arity)
-          (apply ##record rtd fieldvs)
+          (apply ##make rtd fieldvs)
           #f)))))
 
 (define rtd-predicate
@@ -29,14 +29,13 @@
 
 (define rtd-field-index
   (lambda (rtd field-name)
-    (let* ((fieldspecs (##slot-ref rtd 2))
-           (len (vector-length fieldspecs))
+    (let* ((field-count (##flex-length rtd))
            (loop #f))
       (begin
         (set! loop (lambda (i)
-                     (if (fx<? i len)
-                       (let* ((fieldspec (vector-ref fieldspecs i)))
-                         (if (eq? (cadr fieldspec) field-name)
+                     (if (fx<? i field-count)
+                       (let* ((fieldspec (##flex-ref rtd i)))
+                         (if (eq? (##slot-ref fieldspec 2) field-name)
                            (cons i fieldspec)
                            (loop (fx+ i 1))))
                        #f)))
@@ -45,7 +44,7 @@
 (define rtd-accessor
   (lambda (rtd field-name)
     (let* ((predicate? (rtd-predicate rtd))
-           (i (fx+ (car (rtd-field-index rtd field-name)) 1)))
+           (i (car (rtd-field-index rtd field-name))))
       (lambda (record)
         (if (predicate? record)
           (##slot-ref record i)
@@ -56,8 +55,8 @@
     (let* ((predicate? (rtd-predicate rtd))
            (index-spec (rtd-field-index rtd field-name))
            (spec (cdr index-spec)))
-      (if (eq? (car spec) 'mutable)
-        (let* ((i (fx+ (car index-spec) 1)))
+      (if (##slot-ref spec 0)
+        (let* ((i (car index-spec)))
           (lambda (record v)
             (if (predicate? record)
               (##slot-set! record i v)

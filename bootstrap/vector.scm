@@ -22,7 +22,7 @@
              (let* ((copy! #f))
                (begin
                  (set! copy! (lambda (at start)
-                               (if (fx< start end)
+                               (if (fx<? start end)
                                  (begin
                                    (vector-set! to at (vector-ref from start))
                                    (copy! (fx+ at 1) (fx+ start 1)))
@@ -34,7 +34,7 @@
              (let* ((copy! #f))
                (begin
                  (set! copy! (lambda (at last)
-                               (if (fx<= start last)
+                               (if (fx<=? start last)
                                  (begin
                                    (vector-set! to at (vector-ref from last))
                                    (copy! (fx- at 1) (fx- start 1)))
@@ -43,7 +43,7 @@
     (lambda (to at from start end)
       (if (not (eq? to from))
         (vector-copy-forward! to at from start end)
-        (if (fx< at start)
+        (if (fx<? at start)
           (vector-copy-forward! to at from start end)
           (vector-copy-backward! to at from start end))))))
 
@@ -98,4 +98,14 @@
                            #f))
                        res)))
         (loop 0 #t)))))
+
+(define vector->list
+  (lambda (vec)
+    (let* ((loop #f))
+      (begin
+        (set! loop (lambda (i ls)
+                     (if (fx<=? 0 i)
+                       (loop (fx- i 1) (cons (vector-ref vec i) ls))
+                       ls)))
+        (loop (fx- (vector-length vec) 1) '())))))
 
