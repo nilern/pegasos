@@ -504,13 +504,9 @@ pub enum Primop {
     Values = 7 << Value::SHIFT | Tag::Fixnum as usize,
     SymbolHash = 8 << Value::SHIFT | Tag::Fixnum as usize,
     Tag = 9 << Value::SHIFT | Tag::Fixnum as usize,
-    Length = 10 << Value::SHIFT | Tag::Fixnum as usize,
     SlotRef = 11 << Value::SHIFT | Tag::Fixnum as usize,
     SlotSet = 12 << Value::SHIFT | Tag::Fixnum as usize,
     Make = 13 << Value::SHIFT | Tag::Fixnum as usize,
-    Cons = 14 << Value::SHIFT | Tag::Fixnum as usize,
-    Car = 15 << Value::SHIFT | Tag::Fixnum as usize,
-    Cdr = 16 << Value::SHIFT | Tag::Fixnum as usize,
     MakeVector = 17 << Value::SHIFT | Tag::Fixnum as usize,
     FxLt = 18 << Value::SHIFT | Tag::Fixnum as usize,
     FxAdd = 19 << Value::SHIFT | Tag::Fixnum as usize,
@@ -522,7 +518,10 @@ pub enum Primop {
     FxArithmeticShift = 27 << Value::SHIFT | Tag::Fixnum as usize,
     BitCount = 28 << Value::SHIFT | Tag::Fixnum as usize,
     MakeSyntax = 29 << Value::SHIFT | Tag::Fixnum as usize,
-    MakeType = 30 << Value::SHIFT | Tag::Fixnum as usize
+    MakeType = 30 << Value::SHIFT | Tag::Fixnum as usize,
+    FlexLength = 31 << Value::SHIFT | Tag::Fixnum as usize,
+    FlexRef = 32 << Value::SHIFT | Tag::Fixnum as usize,
+    FlexSet = 33 << Value::SHIFT | Tag::Fixnum as usize
 }
 
 impl Display for Primop {
@@ -540,13 +539,9 @@ impl Display for Primop {
             Values => write!(f, "values"),
             SymbolHash => write!(f, "symbol-hash"),
             Tag => write!(f, "tag"),
-            Length => write!(f, "object-length"),
             SlotRef => write!(f, "slot-ref"),
             SlotSet => write!(f, "slot-set!"),
             Make => write!(f, "make"),
-            Cons => write!(f, "cons"),
-            Car => write!(f, "car"),
-            Cdr => write!(f, "cdr"),
             MakeVector => write!(f, "make-vector"),
             FxLt => write!(f, "fx<?"),
             FxAdd => write!(f, "fx+"),
@@ -559,7 +554,10 @@ impl Display for Primop {
             BitCount => write!(f, "bit-count"),
             MakeSyntax => write!(f, "make-syntax"),
             MakeType => write!(f, "make-type"),
-            Type => write!(f, "type")
+            Type => write!(f, "type"),
+            FlexLength => write!(f, "flex-length"),
+            FlexRef => write!(f, "flex-ref"),
+            FlexSet => write!(f, "flex-set!")
         }
     }
 }

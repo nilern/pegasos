@@ -20,13 +20,9 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         Values => values(state),
         SymbolHash => symbol_hash(state),
         Tag => tag(state),
-        Length => object_length(state),
         SlotRef => slot_ref(state),
         SlotSet => slot_set(state),
         Make => make(state),
-        Cons => cons(state),
-        Car => car(state),
-        Cdr => cdr(state),
         MakeVector => make_vector(state),
         FxLt => fx_lt(state),
         FxAdd => fx_add(state),
@@ -39,7 +35,10 @@ pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {
         BitCount => bit_count(state),
         MakeSyntax => make_syntax(state),
         MakeType => make_type(state),
-        Type => typ(state)
+        Type => typ(state),
+        FlexLength => flex_length(state),
+        FlexRef => flex_ref(state),
+        FlexSet => flex_set(state)
     }
 }
 
@@ -204,12 +203,6 @@ primitive! { tag state (v: Value) {
     Ok(Op::Continue)
 }}
 
-primitive! { object_length state (v: HeapValue<()>) {
-    state.push(Value::try_from(unsafe { (*v.header()).len() }).unwrap());
-    state.push(1u16);
-    Ok(Op::Continue)
-}}
-
 primitive! { slot_ref state (o: HeapValue<()>, i: Fixnum) {
     if let Some(&v) = o.slots().get(<Fixnum as Into<usize>>::into(i)) {
         state.push(v);
@@ -224,34 +217,6 @@ primitive! { slot_set state (o: HeapValue<()>, i: Fixnum, v: Value) {
     let mut o = o;
     *o.slots_mut().get_mut(<Fixnum as Into<usize>>::into(i)).unwrap() = v;
     state.push(Value::UNSPECIFIED);
-    state.push(1u16);
-    Ok(Op::Continue)
-}}
-
-fn cons(state: &mut State) -> Result<Op, PgsError> {
-    let argc: usize = state.pop().unwrap()?;
-
-    if argc == 2 {
-        unsafe {
-            state.cons();
-        }
-        state.remove(1).unwrap(); // callee
-        state.push(1u16);
-        Ok(Op::Continue)
-    } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, false), got: argc }
-            .into())
-    }
-}
-
-primitive! { car state (ls: Pair) {
-    state.push(ls.car);
-    state.push(1u16);
-    Ok(Op::Continue)
-}}
-
-primitive! { cdr state (ls: Pair) {
-    state.push(ls.cdr);
     state.push(1u16);
     Ok(Op::Continue)
 }}
@@ -374,7 +339,7 @@ fn make(state: &mut State) -> Result<Op, PgsError> {
     let argc: usize = state.pop().unwrap()?;
 
     if argc > 0 {
-        unsafe { state.make(argc - 1) };
+        unsafe { state.make(argc - 1)? };
         state.remove(1).unwrap(); // callee
         state.push(1u16);
         Ok(Op::Continue)
@@ -423,4 +388,41 @@ primitive! { typ state (v: Value) {
     state.push(typ);
     state.push(1u16);
     Ok(Op::Continue)
+}}
+
+primitive! { flex_length state (v: Value) {
+    if let Ok(v) = state.downcast::<HeapValue<()>>(v) {
+        if let Some(len) = unsafe { (*v.header()).flex_length() } {
+            state.push(len);
+            state.push(1u16);
+            return Ok(Op::Continue);
+        }
+    }
+
+    Err(RuntimeError::Inflexible(v).into())
+}}
+
+primitive! { flex_ref state (v: Value, i: usize) {
+    if let Ok(v) = state.downcast::<HeapValue<()>>(v) {
+        if let Some(flex) = unsafe { (*v.header()).flex_fields() } {
+            state.push(*flex.get(i).unwrap());
+            state.push(1u16);
+            return Ok(Op::Continue);
+        }
+    }
+
+    Err(RuntimeError::Inflexible(v).into())
+}}
+
+primitive! { flex_set state (v: Value, i: usize, elem: Value) {
+    if let Ok(v) = state.downcast::<HeapValue<()>>(v) {
+        if let Some(flex) = unsafe { (*v.header_mut()).flex_fields_mut() } {
+            *flex.get_mut(i).unwrap() = elem;
+            state.push(Value::UNSPECIFIED);
+            state.push(1u16);
+            return Ok(Op::Continue);
+        }
+    }
+
+    Err(RuntimeError::Inflexible(v).into())
 }}

@@ -108,6 +108,15 @@ impl Object {
 
     pub fn identity_hash(&mut self) -> usize { self.header.identity_hash() }
 
+    pub fn flex_length(&self) -> Option<Fixnum> { self.typ.instance_flex_length(self) }
+
+    pub fn flex_fields(&self) -> Option<&[Value]> { self.typ.instance_flex_fields(self) }
+
+    pub fn flex_fields_mut(&mut self) -> Option<&mut [Value]> {
+        let typ = self.typ;
+        typ.instance_flex_fields_mut(self)
+    }
+
     unsafe fn flex_slots(&self) -> &[Value] { self.typ.instance_flex_slots(self) }
 
     unsafe fn flex_slots_mut(&mut self) -> &mut [Value] {
@@ -853,11 +862,18 @@ impl TypeData {
         }
     }
 
-    unsafe fn instance_flex_len(&self, instance: &Object) -> usize {
-        (*(((instance as *const Object).add(1) as *const u8)
+    fn instance_flex_length(&self, instance: &Object) -> Option<Fixnum> {
+        if self.is_flex != Value::FALSE {
+            Some(unsafe { self.instance_flex_len(instance) })
+        } else {
+            None
+        }
+    }
+
+    unsafe fn instance_flex_len(&self, instance: &Object) -> Fixnum {
+        *(((instance as *const Object).add(1) as *const u8)
             .add(<Fixnum as Into<usize>>::into(self.min_size) - size_of::<Fixnum>())
-            as *const Fixnum))
-            .into()
+            as *const Fixnum)
     }
 
     unsafe fn instance_flex_ptr(&self, instance: &Object) -> *const u8 {
@@ -865,28 +881,47 @@ impl TypeData {
             .add(<Fixnum as Into<usize>>::into(self.min_size))
     }
 
+    fn instance_flex_fields(&self, instance: &Object) -> Option<&[Value]> {
+        if self.is_flex != Value::FALSE {
+            Some(unsafe { self.instance_flex_slots(instance) })
+        } else {
+            None
+        }
+    }
+
+    fn instance_flex_fields_mut<'a>(&self, instance: &'a mut Object) -> Option<&'a mut [Value]> {
+        if self.is_flex != Value::FALSE {
+            Some(unsafe { self.instance_flex_slots_mut(instance) })
+        } else {
+            None
+        }
+    }
+
     unsafe fn instance_flex_slots(&self, instance: &Object) -> &[Value] {
         slice::from_raw_parts(
             self.instance_flex_ptr(instance) as *const Value,
-            self.instance_flex_len(instance)
+            self.instance_flex_len(instance).into()
         )
     }
 
     unsafe fn instance_flex_slots_mut<'a>(&self, instance: &'a mut Object) -> &'a mut [Value] {
         slice::from_raw_parts_mut(
             self.instance_flex_ptr(instance) as *mut Value,
-            self.instance_flex_len(instance)
+            self.instance_flex_len(instance).into()
         )
     }
 
     unsafe fn instance_flex_bytes(&self, instance: &Object) -> &[u8] {
-        slice::from_raw_parts(self.instance_flex_ptr(instance), self.instance_flex_len(instance))
+        slice::from_raw_parts(
+            self.instance_flex_ptr(instance),
+            self.instance_flex_len(instance).into()
+        )
     }
 
     unsafe fn instance_flex_bytes_mut<'a>(&self, instance: &'a mut Object) -> &'a mut [u8] {
         slice::from_raw_parts_mut(
             self.instance_flex_ptr(instance) as *mut u8,
-            self.instance_flex_len(instance)
+            self.instance_flex_len(instance).into()
         )
     }
 }

@@ -1,19 +1,19 @@
 (define vector-length
   (lambda (vec)
     (if (vector? vec)
-      (##object-length vec)
+      (##flex-length vec)
       (error "vector-length: not a vector"))))
 
 (define vector-ref
   (lambda (vec i)
     (if (vector? vec)
-      (##slot-ref vec i)
+      (##flex-ref vec i)
       (error "vector-ref: not a vector"))))
 
 (define vector-set!
   (lambda (vec i v)
     (if (vector? vec)
-      (##slot-set! vec i v)
+      (##flex-set! vec i v)
       (error "vector-set!: not a vector"))))
 
 (define vector-copy!

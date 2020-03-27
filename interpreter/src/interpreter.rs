@@ -24,6 +24,7 @@ impl StatefulDisplay for SyntaxError {
 #[derive(Debug)]
 pub enum RuntimeError {
     NonObject(Value),
+    Inflexible(Value),
     Type { expected: Type, value: Value },
     FixnumOverflow,
     FlonumOverflow,
@@ -41,6 +42,8 @@ impl StatefulDisplay for RuntimeError {
         match self {
             RuntimeError::NonObject(value) =>
                 write!(f, "{} is not a heap object", value.fmt_wrap(state)),
+            RuntimeError::Inflexible(value) =>
+                write!(f, "{} does not have an indexed field", value.fmt_wrap(state)),
             RuntimeError::Type { expected, value } =>
                 write!(f, "Type error: {} is not of type {}", value.fmt_wrap(state), expected),
             RuntimeError::FixnumOverflow => write!(f, "fixnum overflow"),

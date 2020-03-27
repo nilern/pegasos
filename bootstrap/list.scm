@@ -1,8 +1,18 @@
 (define null? (lambda (v) (eq? v '())))
 
-(define cons ##cons)
-(define car ##car)
-(define cdr ##cdr)
+(define cons (lambda (car cdr) (##make <pair> car cdr)))
+
+(define car
+  (lambda (ls)
+    (if (pair? ls)
+      (##slot-ref ls 0)
+      (error "not a pair: " ls))))
+
+(define cdr
+  (lambda (ls)
+    (if (pair? ls)
+      (##slot-ref ls 1)
+      (error "not a pair: " ls))))
 
 (define list (lambda xs xs))
 
