@@ -129,3 +129,79 @@
       (add-binding! id binding)
       binding)))
 
+;;;; # Expander Proper
+
+(define expand
+  (lambda (s . args) ; TODO: use `case-lambda`
+    (let* ((env (if (pair? args) (car args) empty-env)))
+      (if (identifier? s)
+        (expand-identifier s env)
+        (if (pair? s)
+          (if (identifier? (car s))
+            (expand-id-application s env)
+            (expand-app s env))
+          (error "bad syntax:" s))))))
+
+(define expand-identifier
+  (lambda (s env)
+    (let* ((binding (resolve s)))
+      (if binding
+        (if (intrinsic? binding)
+          s
+          (if (special-form? binding)
+            (let* ((v (env-lookup (env binding))))
+              (if (eq? v variable)
+                s
+                (if (not v)
+                  (error "out of context:" s)
+                  (error "bad syntax:" s))))))
+        (error "unbound variable:" s)))))
+
+(define expand-id-application
+  (lambda (s env)
+    (let* ((id (car s))
+           (binding (resolve id)))
+      (case binding
+        ((lambda) (expand-lambda s env))
+        ((let-syntax) (expand-let-syntax s env))
+        ((quote) s)
+        ((syntax) s)
+        (else (let* ((v (env-lookup env binding)))
+                (if (procedure? v)
+                  (expand (apply-transformer v s) env)
+                  (expand-app s env))))))))
+
+(define apply-transformer
+  (lambda (t s)
+    (let* ((intro-scope (scope))
+           (intro-s (add-scope s intro-scope))
+           (transformed-s (t intro-s)))
+      (flip-scope transformed-s intro-scope))))
+
+(define expand-lambda
+  (lambda (s env)
+    (let* ((lambda-id (car s))
+           (arg-id (caadr s))
+           (body (caddr s))
+           (sc (scope))
+           (id (add-scope arg-id sc))
+           (binding (add-local-binding! id))
+           (body-env (env-extend env binding variable))
+           (exp-body (expand (add-scope body sc) body-env)))
+      (list lambda-id (list id) exp-body))))
+
+(define expand-let-syntax
+  (lambda (s env)
+    (let* ((let-syntax-id (car s))
+           (lhs-id (caaadr s))
+           (rhs (cadaadr s))
+           (body (caddr s))
+           (sc (scope))
+           (id (add-scope lhs-id sc))
+           (binding (add-local-binding! id))
+           (rhs-val (eval rhs))
+           (body-env (env-extend env binding rhs-val)))
+      (expand (add-scope body sc) body-env))))
+
+(define expand-app (lambda (s env) (map (lambda (s) (expand s env)) s)))
+
