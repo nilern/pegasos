@@ -304,7 +304,7 @@ impl StatefulDisplay for Value {
             ORef(v) => v.st_fmt(state, f),
             Fixnum(n) => Display::fmt(&n, f), // HACK
             Flonum(n) => Display::fmt(&n, f), // HACK
-            Char(c) => Display::fmt(&c, f),   // HACK
+            Char(c) => write!(f, "#\\{}", c), // HACK
             Bool(true) => Display::fmt("#true", f),
             Bool(false) => Display::fmt("#false", f),
             Nil => Display::fmt("()", f),

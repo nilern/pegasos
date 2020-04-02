@@ -98,6 +98,14 @@
 
 ;;;; # Kernel
 
+(define intrinsic?
+  (let* ((crunch-byte (char->integer #\#)))
+    (lambda (s)
+      (let* ((name (syntax-e s)))
+        (if (eq? (##flex-ref name 0) crunch-byte)
+          (eq? (##flex-ref name 1) crunch-byte)
+          #f)))))
+
 (define core-scope (scope))
 
 (define core-forms (set-eq 'lambda 'let-syntax 'quote 'syntax))
@@ -144,18 +152,19 @@
 
 (define expand-identifier
   (lambda (s env)
-    (let* ((binding (resolve s)))
-      (if binding
-        (if (intrinsic? binding)
-          s
+    (if (intrinsic? s)
+      s
+      (let* ((binding (resolve s)))
+        (if binding
           (if (special-form? binding)
+            (error "bad syntax:" s)
             (let* ((v (env-lookup (env binding))))
               (if (eq? v variable)
                 s
                 (if (not v)
                   (error "out of context:" s)
-                  (error "bad syntax:" s))))))
-        (error "unbound variable:" s)))))
+                  (error "bad syntax:" s)))))
+          (error "unbound variable:" s))))))
 
 (define expand-id-application
   (lambda (s env)

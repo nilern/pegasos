@@ -205,6 +205,13 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         }
     }
 
+    fn character(&mut self, pos: Pos) -> Result<(Pos, Token), Error> {
+        match self.chars.next() {
+            Some((_, c)) => Ok((pos, Token::Const(c.into()))),
+            None => Err(Error { what: ErrorWhat::Eof, at: pos })
+        }
+    }
+
     unsafe fn string(&mut self, state: &mut State) -> Result<(Pos, Token), Error> {
         let (pos, _) = self.chars.next().unwrap(); // must be '"', skip it
 
@@ -294,6 +301,10 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                         Some('#') => {
                             let _ = self.chars.next().unwrap();
                             break Some(self.identifier(state, "##"));
+                        },
+                        Some('\\') => {
+                            let _ = self.chars.next().unwrap();
+                            break Some(self.character(pos));
                         },
                         _ => unimplemented!()
                     }
