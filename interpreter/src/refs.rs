@@ -82,9 +82,9 @@ pub enum Tag {
     Flonum = 2, // f29 | f61
     Char = 3,   // (28 | 60) bit char
     Bool = 4,
-    Nil = 5,     // ()
-    Unbound = 6, // Hash table sentinel
-    Unspecified = 7
+    Nil = 5, // ()
+    Unspecified = 6,
+    FrameTag = 7
 }
 
 impl Display for Tag {
@@ -96,8 +96,8 @@ impl Display for Tag {
             Tag::Char => "char",
             Tag::Bool => "boolean",
             Tag::Nil => "null",
-            Tag::Unbound => "unbound",
-            Tag::Unspecified => "unspecified"
+            Tag::Unspecified => "unspecified",
+            Tag::FrameTag => "frame-tag"
         })
     }
 }
@@ -109,8 +109,8 @@ pub enum UnpackedValue {
     Char(char),
     Bool(bool),
     Nil,
-    Unbound,
-    Unspecified
+    Unspecified,
+    FrameTag(FrameTag)
 }
 
 // ---
@@ -149,7 +149,6 @@ impl Value {
     pub const FALSE: Self = Self(0 << Self::SHIFT | Tag::Bool as usize);
 
     pub const NIL: Self = Self(Tag::Nil as usize); // ()
-    pub const UNBOUND: Self = Self(Tag::Unbound as usize); // 'tombstone'
     pub const UNSPECIFIED: Self = Self(Tag::Unspecified as usize); // for 'unspecified' stuff
 
     const BOUNDS_SHIFT: usize = 8 * size_of::<Self>() - Self::SHIFT; // 29 | 61
@@ -169,8 +168,8 @@ impl Value {
             }),
             Tag::Bool => UnpackedValue::Bool((self.0 >> Self::SHIFT) != 0),
             Tag::Nil => UnpackedValue::Nil,
-            Tag::Unbound => UnpackedValue::Unbound,
-            Tag::Unspecified => UnpackedValue::Unspecified
+            Tag::Unspecified => UnpackedValue::Unspecified,
+            Tag::FrameTag => UnpackedValue::FrameTag(unsafe { FrameTag::unchecked_downcast(self) })
         }
     }
 
@@ -309,8 +308,8 @@ impl StatefulDisplay for Value {
             Bool(true) => Display::fmt("#true", f),
             Bool(false) => Display::fmt("#false", f),
             Nil => Display::fmt("()", f),
-            Unbound => Display::fmt("#<unbound>", f), // although we should never actually get here
-            Unspecified => Display::fmt("#<unspecified>", f)
+            Unspecified => Display::fmt("#<unspecified>", f),
+            FrameTag(t) => write!(f, "#<frame-tag {:?}>", t)
         }
     }
 }
@@ -573,14 +572,14 @@ impl Display for Primop {
 #[derive(Debug, Clone, Copy)]
 #[repr(usize)]
 pub enum FrameTag {
-    Done = 0 << Value::SHIFT | Tag::Fixnum as usize,
-    CondBranch = 1 << Value::SHIFT | Tag::Fixnum as usize,
-    Define = 2 << Value::SHIFT | Tag::Fixnum as usize,
-    Set = 3 << Value::SHIFT | Tag::Fixnum as usize,
-    Let = 4 << Value::SHIFT | Tag::Fixnum as usize,
-    Arg = 5 << Value::SHIFT | Tag::Fixnum as usize,
-    Stmt = 6 << Value::SHIFT | Tag::Fixnum as usize,
-    CallWithValues = 7 << Value::SHIFT | Tag::Fixnum as usize
+    Done = 0 << Value::SHIFT | Tag::FrameTag as usize,
+    CondBranch = 1 << Value::SHIFT | Tag::FrameTag as usize,
+    Define = 2 << Value::SHIFT | Tag::FrameTag as usize,
+    Set = 3 << Value::SHIFT | Tag::FrameTag as usize,
+    Let = 4 << Value::SHIFT | Tag::FrameTag as usize,
+    Arg = 5 << Value::SHIFT | Tag::FrameTag as usize,
+    Stmt = 6 << Value::SHIFT | Tag::FrameTag as usize,
+    CallWithValues = 7 << Value::SHIFT | Tag::FrameTag as usize
 }
 
 impl FrameTag {
@@ -598,6 +597,18 @@ impl FrameTag {
             CallWithValues => (2, false)
         }
     }
+}
+
+impl DynamicDowncast for FrameTag {
+    fn downcast(_: &State, v: Value) -> Result<Self, RuntimeError> {
+        if v.has_tag(Tag::FrameTag) {
+            Ok(unsafe { Self::unchecked_downcast(v) })
+        } else {
+            Err(RuntimeError::NonFrameTag(v))
+        }
+    }
+
+    unsafe fn unchecked_downcast(v: Value) -> Self { transmute::<usize, Self>(v.0) }
 }
 
 impl From<FrameTag> for Value {

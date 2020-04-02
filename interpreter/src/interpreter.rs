@@ -34,7 +34,8 @@ pub enum RuntimeError {
     Uncallable(Value),
     Unbound(Symbol),
     NotInPath(PgsString),
-    IO(io::Error)
+    IO(io::Error),
+    NonFrameTag(Value)
 }
 
 impl StatefulDisplay for RuntimeError {
@@ -77,7 +78,8 @@ impl StatefulDisplay for RuntimeError {
             RuntimeError::Unbound(name) => write!(f, "Unbound variable: {}", name),
             RuntimeError::NotInPath(filename) =>
                 write!(f, "File {} not found on *include-path*", filename),
-            RuntimeError::IO(io_err) => write!(f, "IO error: {}", io_err)
+            RuntimeError::IO(io_err) => write!(f, "IO error: {}", io_err),
+            RuntimeError::NonFrameTag(v) => write!(f, "Not a frame tag: {}", v.fmt_wrap(state))
         }
     }
 }
@@ -450,7 +452,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
             Ok(Op::Continue)
         },
         UnpackedValue::Nil => state.raise(SyntaxError(Value::NIL)),
-        UnpackedValue::Unbound => unreachable!()
+        UnpackedValue::FrameTag(_) => unreachable!()
     }
 }
 

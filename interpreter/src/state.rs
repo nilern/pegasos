@@ -83,7 +83,7 @@ impl State {
             *t = TypeData {
                 is_bytes: is_bytes.into(),
                 is_flex: is_flex.into(),
-                name: Symbol::unchecked_downcast(Value::UNBOUND), // HACK
+                name: Symbol::unchecked_downcast(Value::ZERO), // HACK
                 parent: Value::FALSE,
                 min_size: (size_of::<T>() + is_flex as usize * size_of::<Fixnum>())
                     .try_into()
@@ -126,16 +126,16 @@ impl State {
             heap: MemoryManager::new(initial_heap, max_heap),
             symbol_table: SymbolTable::new(),
             stack: Vec::with_capacity(Self::STACK_LEN),
-            env: unsafe { transmute(Value::UNBOUND) }, // HACK
-            immediate_types: [Value::FALSE; 8],        // So that the ORef one becomes #f
-            object_types: BuiltinObjectTypes { indexed: [Value::UNBOUND; 9] }
+            env: unsafe { transmute(Value::ZERO) }, // HACK
+            immediate_types: [Value::FALSE; 8],     // So that the ORef one becomes #f
+            object_types: BuiltinObjectTypes { indexed: [Value::ZERO; 9] }
         };
 
         unsafe {
             let mut typ = Type::unchecked_downcast(
                 res.heap
                     .alloc(
-                        Object::new(Type::unchecked_downcast(Value::UNBOUND)), // HACK
+                        Object::new(Type::unchecked_downcast(Value::ZERO)), // HACK
                         2 * (size_of::<TypeData>() + size_of::<Value>())
                     )
                     .unwrap()
@@ -144,7 +144,7 @@ impl State {
             *typ = TypeData {
                 is_bytes: false.into(),
                 is_flex: true.into(),
-                name: Symbol::unchecked_downcast(Value::UNBOUND), // HACK
+                name: Symbol::unchecked_downcast(Value::ZERO), // HACK
                 parent: Value::FALSE,
                 min_size: (size_of::<TypeData>() + size_of::<Value>()).try_into().unwrap()
             };
@@ -693,9 +693,7 @@ impl<'a> Iterator for Frames<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if !self.done {
             loop {
-                if unimplemented!()
-                /* self.stack[self.index].is_frame_tag() */
-                {
+                if self.stack[self.index].has_tag(Tag::FrameTag) {
                     break;
                 } else if self.index == 0 {
                     self.done = true;
@@ -706,11 +704,15 @@ impl<'a> Iterator for Frames<'a> {
             }
 
             let i = self.index;
-            let tag = unsafe { transmute::<Value, FrameTag>(self.stack[i]) };
+            let tag = unsafe { FrameTag::unchecked_downcast(self.stack[i]) };
             let (base_len, dynamic) = tag.framesize();
             let len = if dynamic {
-                let dyn_len: usize = todo!();
-                // self.stack[i - 2].try_into().expect("Stack frame length corrupted");
+                let dyn_len = self.stack[i - 2];
+                let dyn_len: usize = if dyn_len.has_tag(Tag::Fixnum) {
+                    unsafe { Fixnum::unchecked_downcast(dyn_len).into() }
+                } else {
+                    panic!("Stack frame length corrupted");
+                };
                 base_len + dyn_len + 1
             } else {
                 base_len

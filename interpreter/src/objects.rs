@@ -136,7 +136,7 @@ impl HeapObject for Object {
     type Ref = Value;
     type Fields = PtrFields;
 
-    const LAPSED: Self::Ref = Value::UNBOUND;
+    const LAPSED: Self::Ref = Value::ZERO; // This is fine since it's just for symbol table
 
     fn is_alignment_hole(mem: *const Self) -> bool {
         unsafe { transmute::<Type, usize>((*mem).typ) == 0 }
@@ -341,7 +341,7 @@ pub struct SymbolTable {
 
 impl SymbolTable {
     const VACANT: Value = Value::FALSE;
-    const TOMBSTONE: Value = Value::UNBOUND;
+    const TOMBSTONE: Value = Value::ZERO;
 
     pub fn new() -> Self {
         Self { symbols: vec![Self::VACANT; 2], occupancy: 0, hash_builder: RandomState::new() }

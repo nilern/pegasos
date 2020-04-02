@@ -4,7 +4,7 @@ use std::mem::transmute;
 use super::error::PgsError;
 use super::interpreter::{Op, RuntimeError};
 use super::objects::{Closure, Pair, Symbol, Syntax, Vector};
-use super::refs::{DynamicDowncast, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
+use super::refs::{Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
 use super::state::State;
 
 pub fn perform(op: Primop, state: &mut State) -> Result<Op, PgsError> {

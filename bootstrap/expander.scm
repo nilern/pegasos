@@ -199,9 +199,15 @@
            (sc (scope))
            (id (add-scope lhs-id sc))
            (binding (add-local-binding! id))
-           (rhs-val (eval rhs))
+           (rhs-val (eval-for-syntax-binding rhs))
            (body-env (env-extend env binding rhs-val)))
       (expand (add-scope body sc) body-env))))
 
 (define expand-app (lambda (s env) (map (lambda (s) (expand s env)) s)))
+
+;;;;
+
+(define eval-for-syntax-binding
+  (lambda (rhs)
+    (eval-compiled (compile (expand rhs empty-env)))))
 
