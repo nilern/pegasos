@@ -104,16 +104,14 @@ impl<O: HeapObject> MemoryManager<O> {
     }
 
     // TODO: Heap expansion logic
-    pub unsafe fn collection<'a>(&'a mut self) -> Collection<'a, O> {
+    pub unsafe fn prepare_collection(&mut self) {
         // Swap semispaces:
         swap(&mut self.fromspace, &mut self.tospace);
         self.free = self.tospace.start;
         self.grey = self.tospace.start;
-
-        Collection(self)
     }
 
-    unsafe fn collect_garbage(&mut self) {
+    pub unsafe fn collect_garbage(&mut self) {
         // Trace the rest:
         while self.grey < self.free {
             self.find_header();
@@ -121,19 +119,17 @@ impl<O: HeapObject> MemoryManager<O> {
         }
     }
 
-    fn mark(&mut self, oref: O::Ref) -> O::Ref {
+    pub unsafe fn mark(&mut self, oref: O::Ref) -> O::Ref {
         match oref.as_mut_ptr() {
             Some(obj) => {
-                let obj = unsafe { &mut *obj };
+                let obj = &mut *obj;
 
                 match obj.forwarded() {
                     Some(res) => res,
                     None => {
                         let res = self.alloc(*obj, obj.size()).unwrap(); // tospace is at least as big as fromspace
-                        let new_obj = unsafe { &mut *res.as_mut_ptr().unwrap() }; // surely it is a pointer, we just allocated it
-                        unsafe {
-                            ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size());
-                        }
+                        let new_obj = &mut *res.as_mut_ptr().unwrap(); // surely it is a pointer, we just allocated it
+                        ptr::copy_nonoverlapping(obj.data(), new_obj.data(), obj.size());
                         obj.forward(new_obj.data());
                         res
                     }
@@ -165,34 +161,14 @@ impl<O: HeapObject> MemoryManager<O> {
         }
         self.grey = unsafe { self.grey.add(size_of::<O>() + obj.size()) };
     }
-}
 
-// ---
-
-pub struct Collection<'a, O: HeapObject>(&'a mut MemoryManager<O>);
-
-impl<'a, O: HeapObject> Collection<'a, O> {
-    pub unsafe fn roots<I: Iterator<Item = *mut O::Ref>>(self, roots: I) -> Self {
-        for root in roots {
-            *root = self.0.mark(*root);
-        }
-        self
-    }
-
-    pub unsafe fn traverse(self) -> Self {
-        self.0.collect_garbage();
-        self
-    }
-
-    pub unsafe fn weaks<I: Iterator<Item = *mut O::Ref>>(self, weaks: I) {
-        for weak in weaks {
-            match (*weak).as_mut_ptr() {
-                Some(oref) => match (*oref).forwarded() {
-                    Some(forwarded) => *weak = forwarded,
-                    None => *weak = O::LAPSED
-                },
-                None => {}
-            }
+    pub unsafe fn update_weak(weak: *mut O::Ref) {
+        match (*weak).as_mut_ptr() {
+            Some(oref) => match (*oref).forwarded() {
+                Some(forwarded) => *weak = forwarded,
+                None => *weak = O::LAPSED
+            },
+            None => {}
         }
     }
 }
@@ -296,7 +272,11 @@ mod tests {
 
         let mut roots = [heap.alloc(obj, size).unwrap(), heap.alloc(obj, size).unwrap()];
         unsafe {
-            heap.collection().roots(roots.iter_mut().map(|v| v as *mut Ref)).traverse();
+            heap.prepare_collection();
+            for root in roots.iter_mut() {
+                *root = heap.mark(*root);
+            }
+            heap.collect_garbage();
         }
     }
 }

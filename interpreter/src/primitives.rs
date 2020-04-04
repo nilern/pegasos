@@ -358,20 +358,16 @@ fn make(state: &mut State) -> Result<Op, PgsError> {
 }
 
 primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line: Value, column: Value) {
-    let syntax = Syntax::new(state, datum, scopes, source, line, column).unwrap_or_else(|| {
-        state.push(datum);
-        state.push(scopes);
-        state.push(source);
-        state.push(line);
-        state.push(column);
-        unsafe { state.collect_garbage(); }
-        let column = state.pop().unwrap().unwrap();
-        let line = state.pop().unwrap().unwrap();
-        let source = state.pop().unwrap().unwrap();
-        let scopes = state.pop().unwrap().unwrap();
-        let datum = state.pop().unwrap().unwrap();
-        Syntax::new(state, datum, scopes, source, line, column).unwrap()
-    });
+    let mut datum = datum;
+    let mut scopes = scopes;
+    let mut source = source;
+    let mut line = line;
+    let mut column = column;
+    let syntax = unsafe {
+        with_gc_retry!{ state (datum, scopes, source, line, column) {
+            Syntax::new(state, datum, scopes, source, line, column)
+        }}
+    };
     state.push(syntax);
     state.push(1u16);
     Ok(Op::Continue)

@@ -23,10 +23,33 @@ use super::util::{Bool, False, True};
 
 // ---
 
+#[macro_export]
+macro_rules! with_gc_retry {
+    {$state:ident ($($proteges:ident),*) $body:block} => {{
+        let mut can_gc = true;
+        loop {
+            if let Some(res) = $body {
+                break res;
+            } else {
+                if can_gc {
+                    $state.heap.prepare_collection();
+                    $($proteges = transmute($state.heap.mark($proteges.into()));)*
+                    $state.collect_garbage();
+                    can_gc = false;
+                } else {
+                    panic!("GC OOM");
+                }
+            }
+        }
+    }}
+}
+
+// ---
+
 pub struct State {
     immediate_types: [Value; 8],
     object_types: BuiltinObjectTypes,
-    heap: MemoryManager<Object>,
+    pub heap: MemoryManager<Object>,
     symbol_table: SymbolTable,
     stack: Vec<Value>,
     env: Bindings
@@ -369,44 +392,29 @@ impl State {
     }
 
     pub unsafe fn push_string(&mut self, s: &str) {
-        let v = PgsString::new(self, s).unwrap_or_else(|| {
-            self.collect_garbage();
-            PgsString::new(self, s).unwrap()
-        });
+        let v = with_gc_retry! { self () { PgsString::new(self, s) } };
         self.push(v)
     }
 
     pub unsafe fn push_symbol(&mut self, name: &str) {
-        let v = Symbol::new(self, name).unwrap_or_else(|| {
-            self.collect_garbage();
-            Symbol::new(self, name).unwrap()
-        });
+        let v = with_gc_retry! { self () { Symbol::new(self, name) } };
         self.push(v)
     }
 
     pub unsafe fn cons(&mut self) {
-        let mut pair = Pair::new(self).unwrap_or_else(|| {
-            self.collect_garbage();
-            Pair::new(self).unwrap()
-        });
+        let mut pair = with_gc_retry! { self () { Pair::new(self) } };
         pair.cdr = self.stack.pop().unwrap();
         pair.car = self.stack.pop().unwrap();
         self.push(pair);
     }
 
     pub unsafe fn push_vector(&mut self, len: Fixnum) {
-        let vec = Vector::new(self, len).unwrap_or_else(|| {
-            self.collect_garbage();
-            Vector::new(self, len).unwrap()
-        });
+        let vec = with_gc_retry! { self () { Vector::new(self, len) }};
         self.push(vec);
     }
 
     pub unsafe fn vector(&mut self, len: Fixnum) {
-        let mut vec = Vector::new(self, len).unwrap_or_else(|| {
-            self.collect_garbage();
-            Vector::new(self, len).unwrap()
-        });
+        let mut vec = with_gc_retry! { self () { Vector::new(self, len) } };
         let len: usize = len.into();
         vec.copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
@@ -414,10 +422,7 @@ impl State {
     }
 
     pub unsafe fn closure(&mut self, code: Primop, len: Fixnum) {
-        let mut f = Closure::new(self, code, len).unwrap_or_else(|| {
-            self.collect_garbage();
-            Closure::new(self, code, len).unwrap()
-        });
+        let mut f = with_gc_retry! { self () { Closure::new(self, code, len) } };
         let len: usize = len.into();
         f.clovers_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
@@ -425,30 +430,18 @@ impl State {
     }
 
     pub unsafe fn push_primitive(&mut self, code: Primop) {
-        let f = Closure::new(self, code, 0.into()).unwrap_or_else(|| {
-            self.collect_garbage();
-            Closure::new(self, code, 0.into()).unwrap()
-        });
+        let f = with_gc_retry! { self () { Closure::new(self, code, 0.into()) } };
         self.push(f);
     }
 
     pub unsafe fn push_syntax(&mut self, loc: Loc) -> Result<(), RuntimeError> {
-        let datum = self.peek().unwrap();
+        let mut datum = self.pop().unwrap()?;
         let line = loc.pos.line.try_into()?;
         let column = loc.pos.column.try_into()?;
-        self.push(loc.source);
-        let syntax = if let Some(syntax) =
-            Syntax::new(self, datum, Value::FALSE, loc.source, line, column)
-        {
-            self.pop::<Value>().unwrap().unwrap(); // source
-            self.pop::<Value>().unwrap().unwrap(); // datum
-            syntax
-        } else {
-            self.collect_garbage();
-            let source = self.pop().unwrap().unwrap();
-            let datum = self.pop().unwrap().unwrap();
-            Syntax::new(self, datum, Value::FALSE, source, line, column).unwrap()
-        };
+        let mut source = loc.source;
+        let syntax = with_gc_retry! { self (datum, source) {
+            Syntax::new(self, datum, Value::FALSE, source, line, column)
+        }};
         self.push(syntax);
         Ok(())
     }
@@ -456,46 +449,27 @@ impl State {
     pub unsafe fn make_type(&mut self, field_count: usize) -> Result<(), RuntimeError> {
         let is_bytes: bool = self.downcast(self.get(field_count + 3).unwrap())?;
         let is_flex: bool = self.downcast(self.get(field_count + 2).unwrap())?;
-        let name: Symbol = self.downcast(self.get(field_count + 1).unwrap())?;
-        let parent = self.get(field_count).unwrap();
-        let parent =
-            if parent == Value::FALSE { None } else { Some(self.downcast::<Type>(parent)?.into()) };
+        let mut name: Symbol = self.downcast(self.get(field_count + 1).unwrap())?;
+        let mut parent = self.get(field_count).unwrap();
 
         if !is_bytes {
             if !is_flex {
                 let min_size = (field_count * size_of::<Value>()).try_into()?;
 
-                let t = Type::new(
-                    self,
-                    is_bytes,
-                    is_flex,
-                    name,
-                    parent,
-                    min_size,
-                    transmute::<&[Value], &[FieldDescriptor]>(
-                        &self.stack[self.stack.len() - field_count..]
-                    ) // FIXME
-                )
-                .unwrap_or_else(|| {
-                    self.collect_garbage();
-
-                    let name = Symbol::unchecked_downcast(self.get(field_count - 1).unwrap());
-                    let parent = self.get(field_count).unwrap();
-                    let parent = if parent == Value::FALSE { None } else { Some(parent) };
-
+                let t = with_gc_retry! { self (name, parent) {
                     Type::new(
                         self,
                         is_bytes,
                         is_flex,
                         name,
-                        parent,
+                        if parent == Value::FALSE { None } else { Some(self.downcast::<Type>(parent)?.into()) },
                         min_size,
                         transmute::<&[Value], &[FieldDescriptor]>(
                             &self.stack[self.stack.len() - field_count..]
                         ) // FIXME
                     )
-                    .unwrap()
-                });
+                }};
+
                 self.stack.truncate(self.stack.len() - field_count - 4);
                 self.push(t);
                 Ok(())
@@ -508,21 +482,15 @@ impl State {
     }
 
     pub unsafe fn make(&mut self, len: usize) -> Result<(), RuntimeError> {
-        let t: Type = self.downcast(self.get(len).unwrap())?;
+        let mut t: Type = self.downcast(self.get(len).unwrap())?;
 
         if t.is_bytes == Value::FALSE {
             if t.is_flex == Value::FALSE {
                 assert!(len == t.fields().len());
 
-                let mut res = HeapValue::<()>::unchecked_downcast(
-                    self.heap.alloc(Object::new(t), len * size_of::<Value>()).unwrap_or_else(
-                        || {
-                            self.collect_garbage();
-                            let t = Type::unchecked_downcast(self.get(len).unwrap());
-                            self.heap.alloc(Object::new(t), len * size_of::<Value>()).unwrap()
-                        }
-                    )
-                );
+                let mut res = HeapValue::<()>::unchecked_downcast(with_gc_retry! { self (t) {
+                    self.heap.alloc(Object::new(t), len * size_of::<Value>())
+                }});
                 res.slots_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
                 self.stack.truncate(self.stack.len() - len - 1);
                 self.push(res);
@@ -541,17 +509,11 @@ impl State {
     }
 
     // TODO: Get print names straight
-    pub unsafe fn gensym(&mut self, name: Symbol) {
-        let hash = name.hash;
-        let symbol_t = self.types().symbol;
-        let s =
-            Symbol::create(&mut self.heap, symbol_t, hash, name.as_str()).unwrap_or_else(|| {
-                self.push(name);
-                self.collect_garbage();
-                let name = Symbol::unchecked_downcast(self.pop().unwrap().unwrap());
-                let symbol_t = self.types().symbol;
-                Symbol::create(&mut self.heap, symbol_t, hash, name.as_str()).unwrap()
-            });
+    pub unsafe fn gensym(&mut self, mut name: Symbol) {
+        let s = with_gc_retry! { self (name) {
+            let symbol_t = self.types().symbol;
+            Symbol::create(&mut self.heap, symbol_t, name.hash, name.as_str())
+        }};
         self.push(s);
     }
 
@@ -562,11 +524,7 @@ impl State {
     pub fn set_env(&mut self, env: Bindings) { self.env = env }
 
     pub unsafe fn push_scope(&mut self) {
-        let env = Bindings::new(self, Some(self.env)).unwrap_or_else(|| {
-            self.collect_garbage();
-            Bindings::new(self, Some(self.env)).unwrap()
-        });
-        self.env = env;
+        self.env = with_gc_retry! { self () { Bindings::new(self, Some(self.env)) } };
     }
 
     pub fn lookup(&mut self) -> Result<(), RuntimeError> {
@@ -575,16 +533,9 @@ impl State {
     }
 
     pub unsafe fn define(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop().unwrap().unwrap();
-        let name = self.pop().unwrap()?;
-        self.env.insert(self, name, value).unwrap_or_else(|_| {
-            self.push(name);
-            self.push(value);
-            self.collect_garbage();
-            let value = self.pop().unwrap().unwrap();
-            let name = self.pop().unwrap().unwrap();
-            self.env.insert(self, name, value).unwrap()
-        });
+        let mut value = self.pop().unwrap().unwrap();
+        let mut name = self.pop().unwrap()?;
+        with_gc_retry! { self (name, value) { self.env.insert(self, name, value).ok() }}
         Ok(())
     }
 
@@ -605,16 +556,21 @@ impl State {
         self.stack.truncate(0);
     }
 
-    // TODO: References from symbol table should be weak
     pub unsafe fn collect_garbage(&mut self) {
-        self.heap
-            .collection()
-            .roots(self.stack.iter_mut().map(|v| v as *mut Value))
-            .roots(iter::once(transmute::<&mut Bindings, *mut Value>(&mut self.env)))
-            .roots(self.immediate_types.iter_mut().map(|v| v as *mut Value))
-            .roots(self.object_types.indexed.iter_mut().map(|v| v as *mut Value))
-            .traverse()
-            .weaks(self.symbol_table.iter_mut().map(|v| transmute::<&mut Symbol, *mut Value>(v)));
+        for root in self
+            .stack
+            .iter_mut()
+            .chain(iter::once(transmute::<&mut Bindings, &mut Value>(&mut self.env)))
+            .chain(self.immediate_types.iter_mut())
+            .chain(self.object_types.indexed.iter_mut())
+        {
+            *root = self.heap.mark(*root);
+        }
+        self.heap.collect_garbage();
+
+        for symbol in self.symbol_table.iter_mut() {
+            MemoryManager::<Object>::update_weak(transmute::<&mut Symbol, *mut Value>(symbol));
+        }
     }
 
     pub unsafe fn dump<W: io::Write>(&self, dest: &mut W) -> io::Result<()> {
@@ -748,9 +704,11 @@ mod tests {
         }
 
         unsafe {
+            state.heap.prepare_collection();
             state.collect_garbage();
         }
         unsafe {
+            state.heap.prepare_collection();
             state.collect_garbage();
         } // overwrite initial heap and generally cause more havoc
 

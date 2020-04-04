@@ -11,13 +11,14 @@ use structopt::StructOpt;
 
 mod error;
 mod gc;
+#[macro_use]
+mod state;
 mod interpreter;
 mod lexer;
 mod objects;
 mod parser;
 mod primitives;
 mod refs;
-mod state;
 mod util;
 
 use interpreter::run;

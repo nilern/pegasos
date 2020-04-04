@@ -196,10 +196,9 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                 _ =>
                     return Ok((
                         pos,
-                        Token::Identifier(Symbol::new(state, &self.buf).unwrap_or_else(|| {
-                            state.collect_garbage();
-                            Symbol::new(state, &self.buf).unwrap()
-                        }))
+                        Token::Identifier(
+                            with_gc_retry! { state () { Symbol::new(state, &self.buf) } }
+                        )
                     )),
             }
         }
@@ -224,12 +223,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                     return Ok((
                         pos,
                         Token::Const(
-                            PgsString::new(state, &self.buf)
-                                .unwrap_or_else(|| {
-                                    state.collect_garbage();
-                                    PgsString::new(state, &self.buf).unwrap()
-                                })
-                                .into()
+                            with_gc_retry! { state () { PgsString::new(state, &self.buf) } }.into()
                         )
                     ));
                 },
