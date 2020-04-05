@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::env;
 use std::io;
 use std::iter;
@@ -17,9 +17,7 @@ use super::objects::{
     SyntaxObject, Type, TypeData, Vector, VectorData
 };
 use super::parser::Loc;
-use super::refs::{
-    DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, Tag, Value
-};
+use super::refs::{DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
 use super::util::{Bool, False, True};
 
 // ---
@@ -344,10 +342,6 @@ impl State {
         }
     }
 
-    pub fn downcast<T: DynamicDowncast>(&self, v: Value) -> Result<T, RuntimeError> {
-        T::downcast(self, v)
-    }
-
     pub fn push<T: Into<Value>>(&mut self, v: T) {
         if self.stack.len() < self.stack.capacity() {
             self.stack.push(v.into());
@@ -356,9 +350,9 @@ impl State {
         }
     }
 
-    pub fn pop<T: DynamicDowncast>(&mut self) -> Option<Result<T, RuntimeError>> {
+    pub fn pop<T: TryFrom<Value>>(&mut self) -> Option<Result<T, T::Error>> {
         // FIXME: handle stack underflow
-        self.stack.pop().map(|v| self.downcast::<T>(v))
+        self.stack.pop().map(T::try_from)
     }
 
     pub fn peek(&self) -> Option<Value> { self.stack.last().map(|&v| v) }
@@ -458,7 +452,7 @@ impl State {
     }
 
     pub unsafe fn push_syntax(&mut self, loc: Loc) -> Result<(), RuntimeError> {
-        let mut datum = self.pop().unwrap()?;
+        let mut datum = self.pop().unwrap().unwrap();
         let line = loc.pos.line.try_into()?;
         let column = loc.pos.column.try_into()?;
         let mut source = loc.source;
@@ -470,9 +464,9 @@ impl State {
     }
 
     pub unsafe fn make_type(&mut self, field_count: usize) -> Result<(), RuntimeError> {
-        let is_bytes: bool = self.downcast(self.get(field_count + 3).unwrap())?;
-        let is_flex: bool = self.downcast(self.get(field_count + 2).unwrap())?;
-        let mut name: Symbol = self.downcast(self.get(field_count + 1).unwrap())?;
+        let is_bytes: bool = self.get(field_count + 3).unwrap().try_into()?;
+        let is_flex: bool = self.get(field_count + 2).unwrap().try_into()?;
+        let mut name: Symbol = self.get(field_count + 1).unwrap().try_into()?;
         let mut parent = self.get(field_count).unwrap();
 
         if !is_bytes {
@@ -485,7 +479,7 @@ impl State {
                         is_bytes,
                         is_flex,
                         name,
-                        if parent == Value::FALSE { None } else { Some(self.downcast::<Type>(parent)?.into()) },
+                        if parent == Value::FALSE { None } else { Some(Type::try_from(parent)?.into()) },
                         min_size,
                         transmute::<&[Value], &[FieldDescriptor]>(
                             &self.stack[self.stack.len() - field_count..]
@@ -505,7 +499,7 @@ impl State {
     }
 
     pub unsafe fn make(&mut self, len: usize) -> Result<(), RuntimeError> {
-        let mut t: Type = self.downcast(self.get(len).unwrap())?;
+        let mut t: Type = self.get(len).unwrap().try_into()?;
 
         if t.is_bytes == Value::FALSE {
             if t.is_flex == Value::FALSE {
@@ -552,7 +546,7 @@ impl State {
 
     pub fn lookup(&mut self) -> Result<(), RuntimeError> {
         let name = unsafe { Symbol::unchecked_downcast(self.pop().unwrap().unwrap()) }; // checked before call
-        self.env.get(self, name).map(|v| self.push(v)).ok_or(RuntimeError::Unbound(name))
+        self.env.get(name).map(|v| self.push(v)).ok_or(RuntimeError::Unbound(name))
     }
 
     pub unsafe fn define(&mut self) -> Result<(), RuntimeError> {
@@ -568,9 +562,9 @@ impl State {
     }
 
     pub fn set(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop().unwrap()?;
+        let value = self.pop().unwrap().unwrap();
         let name = self.pop().unwrap()?;
-        self.env.set(self, name, value).map_err(|()| RuntimeError::Unbound(name))?;
+        self.env.set(name, value).map_err(|()| RuntimeError::Unbound(name))?;
         Ok(self.stack.push(Value::UNSPECIFIED))
     }
 
@@ -647,11 +641,10 @@ impl State {
         }
 
         let include_path_sym = self.get_symbol("*include-path*")?;
-        let mut include_path = self.env.get(self, include_path_sym)?;
+        let mut include_path = self.env.get(include_path_sym)?;
 
-        while let Ok(path_pair) = self.downcast::<Pair>(include_path) {
-            let dir =
-                self.downcast::<PgsString>(path_pair.car).expect("non-string in *include-path*"); // HACK
+        while let Ok(path_pair) = Pair::try_from(include_path) {
+            let dir = PgsString::try_from(path_pair.car).expect("non-string in *include-path*"); // HACK
 
             let ores = step(dir.as_ref(), filename);
             if ores.is_some() {
@@ -721,7 +714,7 @@ mod tests {
 
     #[test]
     fn test_gc() {
-        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let n = 4i16;
 
@@ -746,9 +739,9 @@ mod tests {
             } // overwrite initial heap and generally cause more havoc
         });
 
-        let mut ls = with_mut(State::pop).unwrap().unwrap();
+        let mut ls: Value = with_mut(State::pop).unwrap().unwrap();
         for i in 0..n {
-            let pair: Pair = with(|state| state.downcast(ls)).unwrap();
+            let pair: Pair = ls.try_into().unwrap();
             assert_eq!(pair.car, i.into());
             ls = pair.cdr;
         }

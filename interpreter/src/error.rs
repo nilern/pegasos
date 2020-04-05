@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use std::fmt::{self, Display, Formatter};
 
 use super::interpreter::{RuntimeError, SyntaxError};
@@ -20,6 +21,10 @@ impl From<SyntaxError> for PgsError {
 
 impl From<RuntimeError> for PgsError {
     fn from(err: RuntimeError) -> Self { PgsError::Runtime(err) }
+}
+
+impl From<Infallible> for PgsError {
+    fn from(_: Infallible) -> Self { unreachable!() }
 }
 
 impl Display for PgsError {

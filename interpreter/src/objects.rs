@@ -13,9 +13,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager, ObjectReference};
-use super::refs::{
-    DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, UnpackedValue, Value
-};
+use super::refs::{DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, UnpackedValue, Value};
 use super::state::{self, State};
 use super::util::{False, True};
 
@@ -46,7 +44,8 @@ impl Display for UnpackedHeapValue {
             UnpackedHeapValue::Syntax(s) => s.fmt(f),
             UnpackedHeapValue::Type(t) => write!(f, "{}", t),
             UnpackedHeapValue::FieldDescriptor(fd) => write!(f, "{}", fd),
-            UnpackedHeapValue::Other(v) => write!(f, "#<instance {}>", state::with(|state| state.type_of(v)))
+            UnpackedHeapValue::Other(v) =>
+                write!(f, "#<instance {}>", state::with(|state| state.type_of(v))),
         }
     }
 }
@@ -476,7 +475,7 @@ impl Display for Pair {
 
         let mut ls = self.cdr;
 
-        while let Ok(p) = state::with(|state| state.downcast::<Pair>(ls)) {
+        while let Ok(p) = Pair::try_from(ls) {
             write!(f, " {}", p.car)?;
             ls = p.cdr;
         }
@@ -572,13 +571,13 @@ impl Bindings {
 
     const VACANT: Value = Value::ZERO;
 
-    pub fn get(self, state: &State, name: Symbol) -> Option<Value> {
+    pub fn get(self, name: Symbol) -> Option<Value> {
         let mut this = self;
         loop {
             match this.locate(name) {
                 (i, true) => return Some(this.values[i]),
                 (_, false) =>
-                    if let Ok(parent) = state.downcast::<Bindings>(this.parent) {
+                    if let Ok(parent) = Bindings::try_from(this.parent) {
                         this = parent;
                     } else {
                         return None;
@@ -593,7 +592,7 @@ impl Bindings {
     }
 
     // Returns `Err` if not found.
-    pub fn set(self, state: &State, name: Symbol, value: Value) -> Result<(), ()> {
+    pub fn set(self, name: Symbol, value: Value) -> Result<(), ()> {
         let mut this = self;
         loop {
             match this.locate(name) {
@@ -602,7 +601,7 @@ impl Bindings {
                     return Ok(());
                 },
                 (_, false) =>
-                    if let Ok(parent) = state.downcast::<Bindings>(this.parent) {
+                    if let Ok(parent) = Bindings::try_from(this.parent) {
                         this = parent;
                     } else {
                         return Err(());
@@ -666,7 +665,7 @@ impl Bindings {
     fn capacity(self) -> usize { self.keys.len() }
 
     pub fn dump<W: io::Write>(self, state: &State, dest: &mut W) -> io::Result<()> {
-        if let Ok(parent) = state.downcast::<Bindings>(self.parent) {
+        if let Ok(parent) = Bindings::try_from(self.parent) {
             parent.dump(state, dest)?;
         }
 
@@ -723,7 +722,7 @@ impl Value {
     /// `syntax->datum`
     pub unsafe fn to_datum(self, state: &mut State) -> Value {
         match self.unpack() {
-            UnpackedValue::ORef(o) => match o.unpack(state) {
+            UnpackedValue::ORef(o) => match o.unpack() {
                 UnpackedHeapValue::Syntax(syntax) => syntax.datum.to_datum(state),
                 UnpackedHeapValue::Pair(pair) => {
                     state.push(pair);
@@ -1061,8 +1060,8 @@ mod tests {
         bindings.insert(&mut state, foo, a).unwrap();
         bindings.insert(&mut state, bar, b).unwrap();
 
-        assert_eq!(bindings.get(&state, foo).unwrap(), a);
-        assert_eq!(bindings.get(&state, bar).unwrap(), b);
+        assert_eq!(bindings.get(foo).unwrap(), a);
+        assert_eq!(bindings.get(bar).unwrap(), b);
     }
 
     #[test]

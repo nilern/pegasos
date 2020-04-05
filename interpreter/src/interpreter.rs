@@ -118,17 +118,17 @@ fn run(state: &mut State) -> Result<(), PgsError> {
 
 fn eval(state: &mut State) -> Result<Op, PgsError> {
     match state.peek().unwrap().unpack() {
-        UnpackedValue::ORef(oref) => match oref.unpack(state) {
+        UnpackedValue::ORef(oref) => match oref.unpack() {
             UnpackedHeapValue::Pair(pair) => {
-                if let Ok(callee) = state.downcast::<Syntax>(pair.car) {
-                    if let Ok(sym) = state.downcast::<Symbol>(callee.datum) {
+                if let Ok(callee) = Syntax::try_from(pair.car) {
+                    if let Ok(sym) = Symbol::try_from(callee.datum) {
                         match sym.as_str() {
                             "define" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     // FIXME: Fail if not on toplevel
-                                    if let Ok(syntax) = state.downcast::<Syntax>(args.car) {
-                                        if let Ok(name) = state.downcast::<Symbol>(syntax.datum) {
-                                            if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
+                                    if let Ok(syntax) = Syntax::try_from(args.car) {
+                                        if let Ok(name) = Symbol::try_from(syntax.datum) {
+                                            if let Ok(rargs) = Pair::try_from(args.cdr) {
                                                 let value_expr = rargs.car;
 
                                                 if rargs.cdr == Value::NIL {
@@ -147,10 +147,10 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "set!" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
-                                    if let Ok(syntax) = state.downcast::<Syntax>(args.car) {
-                                        if let Ok(name) = state.downcast::<Symbol>(syntax.datum) {
-                                            if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
+                                    if let Ok(syntax) = Syntax::try_from(args.car) {
+                                        if let Ok(name) = Symbol::try_from(syntax.datum) {
+                                            if let Ok(rargs) = Pair::try_from(args.cdr) {
                                                 let value_expr = rargs.car;
 
                                                 if rargs.cdr == Value::NIL {
@@ -169,7 +169,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "begin" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     let stmt = args.car;
 
                                     if args.cdr == Value::NIL {
@@ -189,13 +189,13 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "if" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     let condition = args.car;
 
-                                    if let Ok(branches) = state.downcast::<Pair>(args.cdr) {
+                                    if let Ok(branches) = Pair::try_from(args.cdr) {
                                         let succeed = branches.car;
 
-                                        if let Ok(rargs) = state.downcast::<Pair>(branches.cdr) {
+                                        if let Ok(rargs) = Pair::try_from(branches.cdr) {
                                             let fail = rargs.car;
 
                                             if rargs.cdr == Value::NIL {
@@ -214,7 +214,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "syntax" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     if args.cdr == Value::NIL {
                                         state.pop::<Value>().unwrap().unwrap();
                                         state.push(args.car);
@@ -226,7 +226,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "quote" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     if args.cdr == Value::NIL {
                                         state.pop::<Value>().unwrap().unwrap();
                                         let datum = unsafe { args.car.to_datum(state) };
@@ -239,30 +239,26 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "let*" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     let bindings = args.car;
 
-                                    if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
+                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
                                         let body = rargs.car;
 
                                         if rargs.cdr == Value::NIL {
-                                            if let Ok(bindings) = state.downcast::<Syntax>(bindings)
-                                            {
-                                                if let Ok(bindings) =
-                                                    state.downcast::<Pair>(bindings.datum)
+                                            if let Ok(bindings) = Syntax::try_from(bindings) {
+                                                if let Ok(bindings) = Pair::try_from(bindings.datum)
                                                 {
                                                     let binding = bindings.car;
 
-                                                    if let Ok(binding) =
-                                                        state.downcast::<Syntax>(binding)
-                                                    {
+                                                    if let Ok(binding) = Syntax::try_from(binding) {
                                                         if let Ok(binding) =
-                                                            state.downcast::<Pair>(binding.datum)
+                                                            Pair::try_from(binding.datum)
                                                         {
                                                             let binder = binding.car;
 
                                                             if let Ok(exprs) =
-                                                                state.downcast::<Pair>(binding.cdr)
+                                                                Pair::try_from(binding.cdr)
                                                             {
                                                                 let expr = exprs.car;
 
@@ -295,10 +291,10 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "lambda" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     let params = args.car;
 
-                                    if let Ok(rargs) = state.downcast::<Pair>(args.cdr) {
+                                    if let Ok(rargs) = Pair::try_from(args.cdr) {
                                         let body = rargs.car;
 
                                         if rargs.cdr == Value::NIL {
@@ -306,18 +302,16 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                             state.push_env();
                                             state.push(body);
 
-                                            if let Ok(params) = state.downcast::<Syntax>(params) {
+                                            if let Ok(params) = Syntax::try_from(params) {
                                                 let mut params = params.datum;
                                                 let mut arity = 0;
 
-                                                while let Ok(param_pair) =
-                                                    state.downcast::<Pair>(params)
-                                                {
+                                                while let Ok(param_pair) = Pair::try_from(params) {
                                                     if let Ok(param) =
-                                                        state.downcast::<Syntax>(param_pair.car)
+                                                        Syntax::try_from(param_pair.car)
                                                     {
                                                         if let Ok(param) =
-                                                            state.downcast::<Symbol>(param.datum)
+                                                            Symbol::try_from(param.datum)
                                                         {
                                                             arity += 1;
                                                             params = param_pair.cdr;
@@ -334,16 +328,14 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                                     state.insert_after(arity, params);
                                                 } else {
                                                     let params = if let Ok(params) =
-                                                        state.downcast::<Syntax>(params)
+                                                        Syntax::try_from(params)
                                                     {
                                                         params.datum
                                                     } else {
                                                         params
                                                     };
 
-                                                    if let Ok(params) =
-                                                        state.downcast::<Symbol>(params)
-                                                    {
+                                                    if let Ok(params) = Symbol::try_from(params) {
                                                         state.insert_after(arity, params.into());
                                                     } else {
                                                         state.raise(SyntaxError(params.into()))?;
@@ -364,11 +356,11 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
                                 state.raise(SyntaxError(pair.into()))?;
                             },
                             "include" => {
-                                if let Ok(args) = state.downcast::<Pair>(pair.cdr) {
+                                if let Ok(args) = Pair::try_from(pair.cdr) {
                                     if args.cdr == Value::NIL {
-                                        if let Ok(filename) = state.downcast::<Syntax>(args.car) {
+                                        if let Ok(filename) = Syntax::try_from(args.car) {
                                             if let Ok(filename) =
-                                                state.downcast::<PgsString>(filename.datum)
+                                                PgsString::try_from(filename.datum)
                                             {
                                                 if let Some(path) = state.resolve_path(&filename) {
                                                     match fs::read_to_string(&path) {
@@ -466,7 +458,7 @@ fn eval(state: &mut State) -> Result<Op, PgsError> {
 
 fn continu(state: &mut State) -> Result<Op, PgsError> {
     let value_count: usize = state.pop().unwrap()?;
-    state.set_env(state.downcast::<Bindings>(state.get(value_count + 1).unwrap()).unwrap());
+    state.set_env(Bindings::try_from(state.get(value_count + 1).unwrap()).unwrap());
     match unsafe { transmute::<Value, FrameTag>(state.get(value_count).unwrap()) } {
         FrameTag::Done => {
             if value_count == 1 {
@@ -526,8 +518,8 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         },
         FrameTag::Let => {
             if value_count == 1 {
-                if let Ok(name) = state.downcast::<Syntax>(state.get(3).unwrap()) {
-                    if let Ok(name) = state.downcast::<Symbol>(name.datum) {
+                if let Ok(name) = Syntax::try_from(state.get(3).unwrap()) {
+                    if let Ok(name) = Symbol::try_from(name.datum) {
                         state.insert_after(1, name.into());
                         unsafe {
                             state.push_scope();
@@ -536,14 +528,14 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
 
                         let bindings = state.get(3).unwrap();
 
-                        if let Ok(bindings) = state.downcast::<Pair>(bindings) {
+                        if let Ok(bindings) = Pair::try_from(bindings) {
                             let binding = bindings.car;
 
-                            if let Ok(binding) = state.downcast::<Syntax>(binding) {
-                                if let Ok(binding) = state.downcast::<Pair>(binding.datum) {
+                            if let Ok(binding) = Syntax::try_from(binding) {
+                                if let Ok(binding) = Pair::try_from(binding.datum) {
                                     let binder = binding.car;
 
-                                    if let Ok(exprs) = state.downcast::<Pair>(binding.cdr) {
+                                    if let Ok(exprs) = Pair::try_from(binding.cdr) {
                                         let expr = exprs.car;
 
                                         if exprs.cdr == Value::NIL {
@@ -580,7 +572,7 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
         FrameTag::Stmt => {
             let stmts = state.get(value_count + 2).unwrap();
 
-            if let Ok(stmts) = state.downcast::<Pair>(stmts) {
+            if let Ok(stmts) = Pair::try_from(stmts) {
                 for _ in 0..value_count {
                     state.pop::<Value>().unwrap().unwrap();
                 }
@@ -601,11 +593,11 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
             if value_count == 1 {
                 let value: Value = state.pop().unwrap().unwrap();
                 let i = state.get(2).unwrap();
-                let i: usize = state.downcast(i)?;
+                let i: usize = i.try_into()?;
                 let rargs = state.get(3 + i).unwrap();
 
                 // OPTIMIZE:
-                if let Ok(rargs) = state.downcast::<Pair>(rargs) {
+                if let Ok(rargs) = Pair::try_from(rargs) {
                     state.pop::<Value>().unwrap().unwrap(); // frame tag
                     state.pop::<Value>().unwrap().unwrap(); // env
                     state.pop::<Value>().unwrap().unwrap(); // i
@@ -643,9 +635,9 @@ fn continu(state: &mut State) -> Result<Op, PgsError> {
 fn apply(state: &mut State) -> Result<Op, PgsError> {
     // ... callee arg{argc} argc
     let arg_count = state.peek().unwrap();
-    let arg_count: usize = state.downcast(arg_count)?;
+    let arg_count: usize = arg_count.try_into()?;
 
-    if let Ok(callee) = state.downcast::<Closure>(state.get(arg_count + 1).unwrap()) {
+    if let Ok(callee) = Closure::try_from(state.get(arg_count + 1).unwrap()) {
         primitives::perform(callee.code, state)
     } else {
         state.raise(RuntimeError::Uncallable(state.get(arg_count + 1).unwrap()))

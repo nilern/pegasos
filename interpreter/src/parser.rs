@@ -346,9 +346,11 @@ mod tests {
     use super::super::objects::{Symbol, Syntax, Vector};
     use super::super::state;
 
+    use std::convert::TryFrom;
+
     #[test]
     fn test_const() {
-        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" 23 ".chars()));
 
         state::with_mut(|state| unsafe {
@@ -362,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_symbol() {
-        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" foo ".chars()));
         unsafe {
             state::with_mut(|state| state.push_symbol("foo"));
@@ -374,7 +376,7 @@ mod tests {
             parser.sexpr(state).unwrap();
         });
         let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
-        let parsed: Symbol = state::with(|state| state.downcast(parsed.datum)).unwrap();
+        let parsed: Symbol = parsed.datum.try_into().unwrap();
 
         assert_eq!(parsed.as_str(), symbol.as_str());
         assert_eq!(parsed.hash, symbol.hash);
@@ -382,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_nil() {
-        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" () ".chars()));
 
         state::with_mut(|state| unsafe {
@@ -396,7 +398,7 @@ mod tests {
 
     #[test]
     fn test_proper() {
-        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5) ".chars()));
 
         state::with_mut(|state| unsafe {
@@ -404,15 +406,15 @@ mod tests {
             parser.sexpr(state).unwrap();
         });
         let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
-        let parsed: Pair = state::with(|state| state.downcast(parsed.datum)).unwrap();
+        let parsed: Pair = parsed.datum.try_into().unwrap();
 
-        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed.car)).unwrap().datum, Value::from(5i16));
+        assert_eq!(Syntax::try_from(parsed.car).unwrap().datum, Value::from(5i16));
         assert_eq!(parsed.cdr, Value::NIL);
     }
 
     #[test]
     fn test_improper() {
-        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5 . 8) ".chars()));
 
         state::with_mut(|state| unsafe {
@@ -420,15 +422,15 @@ mod tests {
             parser.sexpr(state).unwrap();
         });
         let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
-        let parsed: Pair = state::with(|state| state.downcast(parsed.datum)).unwrap();
+        let parsed: Pair = parsed.datum.try_into().unwrap();
 
-        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed.car)).unwrap().datum, Value::from(5i16));
-        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed.cdr)).unwrap().datum, Value::from(8i16));
+        assert_eq!(Syntax::try_from(parsed.car).unwrap().datum, Value::from(5i16));
+        assert_eq!(Syntax::try_from(parsed.cdr).unwrap().datum, Value::from(8i16));
     }
 
     #[test]
     fn test_vector() {
-        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" #(5) ".chars()));
 
         state::with_mut(|state| unsafe {
@@ -436,9 +438,9 @@ mod tests {
             parser.sexpr(state).unwrap();
         });
         let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
-        let parsed: Vector = state::with(|state| state.downcast(parsed.datum)).unwrap();
+        let parsed: Vector = parsed.datum.try_into().unwrap();
 
         assert_eq!(parsed.len(), 1);
-        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed[0])).unwrap().datum, Value::from(5i16));
+        assert_eq!(Syntax::try_from(parsed[0]).unwrap().datum, Value::from(5i16));
     }
 }

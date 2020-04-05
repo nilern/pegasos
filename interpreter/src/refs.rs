@@ -13,18 +13,13 @@ use strum_macros::EnumIter;
 
 use super::gc::{HeapObject, ObjectReference};
 use super::interpreter::RuntimeError;
-use super::objects::{
-    Bindings, Closure, FieldDescriptor, Object, Pair, PgsString, Symbol, Syntax, Type,
-    UnpackedHeapValue, Vector
-};
+use super::objects::{Object, Type, UnpackedHeapValue};
 use super::state::{self, State};
 use super::util::{fsize, Bool, False};
 
 // ---
 
 pub trait DynamicDowncast: TryInto<Value> {
-    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError>;
-
     unsafe fn unchecked_downcast(v: Value) -> Self;
 }
 
@@ -33,21 +28,27 @@ pub trait DynamicType: Sized {
     type IsFlex: Bool;
 
     fn reify_via(state: &State) -> Type;
-    
+
     fn reify() -> Type { state::with(Self::reify_via) }
 }
 
+pub fn type_of(v: Value) -> Type { state::with(|state| state.type_of(v)) }
+
 impl<T: DynamicType> DynamicDowncast for HeapValue<T> {
-    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError> {
-        if state.type_of(v) == T::reify() {
+    unsafe fn unchecked_downcast(value: Value) -> Self {
+        HeapValue { value, _phantom: PhantomData }
+    }
+}
+
+impl<T: DynamicType> TryFrom<Value> for HeapValue<T> {
+    type Error = RuntimeError;
+
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        if type_of(v) == T::reify() {
             Ok(unsafe { Self::unchecked_downcast(v) })
         } else {
             Err(RuntimeError::Type { expected: T::reify(), value: v })
         }
-    }
-
-    unsafe fn unchecked_downcast(value: Value) -> Self {
-        HeapValue { value, _phantom: PhantomData }
     }
 }
 
@@ -116,8 +117,6 @@ impl ObjectReference for Value {
 }
 
 impl DynamicDowncast for Value {
-    fn downcast(_: &State, v: Value) -> Result<Self, RuntimeError> { Ok(v) }
-
     unsafe fn unchecked_downcast(v: Value) -> Self { v }
 }
 
@@ -190,11 +189,15 @@ impl TryFrom<isize> for Value {
 }
 
 impl DynamicDowncast for isize {
-    fn downcast(state: &State, value: Value) -> Result<Self, RuntimeError> {
-        state.downcast::<Fixnum>(value).map(|n| n.into())
-    }
-
     unsafe fn unchecked_downcast(v: Value) -> Self { v.0 as isize >> Value::SHIFT }
+}
+
+impl TryFrom<Value> for isize {
+    type Error = RuntimeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        value.try_into().map(|n| <Fixnum as Into<isize>>::into(n))
+    }
 }
 
 impl TryFrom<usize> for Value {
@@ -210,11 +213,15 @@ impl TryFrom<usize> for Value {
     }
 }
 
-impl DynamicDowncast for usize {
-    fn downcast(state: &State, value: Value) -> Result<Self, RuntimeError> {
-        state.downcast::<Fixnum>(value).map(|n| n.into())
-    }
+impl TryFrom<Value> for usize {
+    type Error = RuntimeError;
 
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        value.try_into().map(|n| <Fixnum as Into<usize>>::into(n))
+    }
+}
+
+impl DynamicDowncast for usize {
     unsafe fn unchecked_downcast(v: Value) -> Self { v.0 >> Value::SHIFT }
 }
 
@@ -235,20 +242,26 @@ impl From<char> for Value {
     fn from(c: char) -> Self { Self((c as usize) << Self::SHIFT | Tag::Char as usize) }
 }
 
-impl DynamicDowncast for char {
-    fn downcast(state: &State, value: Value) -> Result<Self, RuntimeError> {
+impl TryFrom<Value> for char {
+    type Error = RuntimeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
         if value.has_tag(Tag::Char) {
             Ok(unsafe { Self::unchecked_downcast(value) })
         } else {
             Err(RuntimeError::Type {
                 expected: unsafe {
-                    Type::unchecked_downcast(state.immediate_types()[Tag::Char as usize])
+                    Type::unchecked_downcast(state::with(|state| {
+                        state.immediate_types()[Tag::Char as usize]
+                    }))
                 },
                 value
             })
         }
     }
+}
 
+impl DynamicDowncast for char {
     unsafe fn unchecked_downcast(v: Value) -> Self {
         char::from_u32_unchecked((v.0 >> Value::SHIFT) as u32)
     }
@@ -258,20 +271,26 @@ impl From<bool> for Value {
     fn from(b: bool) -> Self { Self((b as usize) << Self::SHIFT | Tag::Bool as usize) }
 }
 
-impl DynamicDowncast for bool {
-    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError> {
-        if v.has_tag(Tag::Bool) {
-            Ok(unsafe { Self::unchecked_downcast(v) })
+impl TryFrom<Value> for bool {
+    type Error = RuntimeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if value.has_tag(Tag::Bool) {
+            Ok(unsafe { Self::unchecked_downcast(value) })
         } else {
             Err(RuntimeError::Type {
-                value: v,
                 expected: unsafe {
-                    Type::unchecked_downcast(state.immediate_types()[Tag::Bool as usize])
-                }
+                    Type::unchecked_downcast(state::with(|state| {
+                        state.immediate_types()[Tag::Bool as usize]
+                    }))
+                },
+                value
             })
         }
     }
+}
 
+impl DynamicDowncast for bool {
     unsafe fn unchecked_downcast(v: Value) -> Self { v.0 >> Value::SHIFT != 0 }
 }
 
@@ -331,20 +350,26 @@ impl From<Fixnum> for Value {
     fn from(n: Fixnum) -> Value { n.0 }
 }
 
-impl DynamicDowncast for Fixnum {
-    fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError> {
-        if v.tag() == Self::TAG {
-            Ok(Self(v))
+impl TryFrom<Value> for Fixnum {
+    type Error = RuntimeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if value.has_tag(Self::TAG) {
+            Ok(unsafe { Self::unchecked_downcast(value) })
         } else {
             Err(RuntimeError::Type {
                 expected: unsafe {
-                    Type::unchecked_downcast(state.immediate_types()[Tag::Fixnum as usize])
+                    Type::unchecked_downcast(state::with(|state| {
+                        state.immediate_types()[Tag::Fixnum as usize]
+                    }))
                 },
-                value: v
+                value
             })
         }
     }
+}
 
+impl DynamicDowncast for Fixnum {
     unsafe fn unchecked_downcast(v: Value) -> Self { Self(v) }
 }
 
@@ -582,15 +607,19 @@ impl FrameTag {
     }
 }
 
-impl DynamicDowncast for FrameTag {
-    fn downcast(_: &State, v: Value) -> Result<Self, RuntimeError> {
+impl TryFrom<Value> for FrameTag {
+    type Error = RuntimeError;
+
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
         if v.has_tag(Tag::FrameTag) {
             Ok(unsafe { Self::unchecked_downcast(v) })
         } else {
             Err(RuntimeError::NonFrameTag(v))
         }
     }
+}
 
+impl DynamicDowncast for FrameTag {
     unsafe fn unchecked_downcast(v: Value) -> Self { transmute::<usize, Self>(v.0) }
 }
 
@@ -648,25 +677,25 @@ impl<T: ?Sized> HeapValue<T> {
 impl HeapValue<()> {
     pub fn typ(self) -> Type { unsafe { (*self.header()).typ() } }
 
-    pub fn unpack(self, state: &State) -> UnpackedHeapValue {
-        if let Ok(vec) = state.downcast::<Vector>(self.into()) {
+    pub fn unpack(self) -> UnpackedHeapValue {
+        if let Ok(vec) = Value::from(self).try_into() {
             UnpackedHeapValue::Vector(vec)
-        } else if let Ok(s) = state.downcast::<PgsString>(self.into()) {
+        } else if let Ok(s) = Value::from(self).try_into() {
             UnpackedHeapValue::String(s)
-        } else if let Ok(s) = state.downcast::<Symbol>(self.into()) {
+        } else if let Ok(s) = Value::from(self).try_into() {
             UnpackedHeapValue::Symbol(s)
-        } else if let Ok(p) = state.downcast::<Pair>(self.into()) {
+        } else if let Ok(p) = Value::from(self).try_into() {
             UnpackedHeapValue::Pair(p)
-        } else if let Ok(env) = state.downcast::<Bindings>(self.into()) {
+        } else if let Ok(env) = Value::from(self).try_into() {
             UnpackedHeapValue::Bindings(env)
-        } else if let Ok(f) = state.downcast::<Closure>(self.into()) {
+        } else if let Ok(f) = Value::from(self).try_into() {
             UnpackedHeapValue::Closure(f)
-        } else if let Ok(s) = state.downcast::<Syntax>(self.into()) {
+        } else if let Ok(s) = Value::from(self).try_into() {
             UnpackedHeapValue::Syntax(s)
-        } else if let Ok(t) = state.downcast::<Type>(self.into()) {
+        } else if let Ok(t) = Value::from(self).try_into() {
             UnpackedHeapValue::Type(t)
-        } else if let Ok(t) = state.downcast::<FieldDescriptor>(self.into()) {
-            UnpackedHeapValue::FieldDescriptor(t)
+        } else if let Ok(fd) = Value::from(self).try_into() {
+            UnpackedHeapValue::FieldDescriptor(fd)
         } else {
             UnpackedHeapValue::Other(self.into())
         }
@@ -700,8 +729,6 @@ impl TryFrom<Value> for HeapValue<()> {
 }
 
 impl DynamicDowncast for HeapValue<()> {
-    fn downcast(_: &State, v: Value) -> Result<Self, RuntimeError> { Self::try_from(v) }
-
     unsafe fn unchecked_downcast(value: Value) -> Self {
         HeapValue { value, _phantom: PhantomData }
     }
@@ -712,9 +739,7 @@ impl<T: DynamicType<IsFlex = False> + Debug> Debug for HeapValue<T> {
 }
 
 impl Display for HeapValue<()> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        state::with(|state| self.unpack(state).fmt(f))
-    }
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.unpack().fmt(f) }
 }
 
 // ---
@@ -723,46 +748,48 @@ impl Display for HeapValue<()> {
 mod tests {
     use super::*;
 
+    use super::super::interpreter::Interpreter;
+
     #[test]
     fn test_char() {
-        let state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let c = 'a';
 
         let v = Value::from(c);
 
         assert!(!v.has_tag(Tag::ORef));
-        assert_eq!(c, state.downcast(v).unwrap());
+        assert_eq!(c, v.try_into().unwrap());
     }
 
     #[test]
     fn test_bool() {
-        let state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let b = true;
 
         let v = Value::from(b);
 
         assert!(!v.has_tag(Tag::ORef));
-        assert_eq!(b, state.downcast(v).unwrap());
+        assert_eq!(b, v.try_into().unwrap());
     }
 
     #[test]
     fn test_fixnum() {
-        let state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let n = 23isize;
 
         let v = Value::from(23i16);
 
         assert!(!v.has_tag(Tag::ORef));
-        assert_eq!(n, state.downcast(v).unwrap());
+        assert_eq!(n, v.try_into().unwrap());
 
         let m = -n;
 
         let u = Value::try_from(m).unwrap();
 
         assert!(!u.has_tag(Tag::ORef));
-        assert_eq!(m, state.downcast(u).unwrap());
+        assert_eq!(m, u.try_into().unwrap());
     }
 }

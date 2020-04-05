@@ -1,4 +1,4 @@
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::mem::transmute;
 
 use super::error::PgsError;
@@ -101,7 +101,7 @@ fn call(state: &mut State) -> Result<Op, PgsError> {
 
     match callee.clovers() {
         &[env, body, rest_param, params] => {
-            let params = state.downcast::<Vector>(params).unwrap();
+            let params: Vector = params.try_into().unwrap();
             let fixed_argc = params.len();
             let variadic = rest_param != Value::NIL;
 
@@ -116,7 +116,7 @@ fn call(state: &mut State) -> Result<Op, PgsError> {
                 state.insert_after(arg_count, params.into());
                 state.insert_after(arg_count, rest_param);
 
-                state.set_env(state.downcast(env)?);
+                state.set_env(env.try_into()?);
                 unsafe { state.push_scope() };
 
                 if variadic {
@@ -158,7 +158,7 @@ fn apply(state: &mut State) -> Result<Op, PgsError> {
         let mut ls: Value = state.pop::<Value>().unwrap().unwrap();
         let mut final_argc = argc - 2;
 
-        while let Ok(pair) = state.downcast::<Pair>(ls) {
+        while let Ok(pair) = Pair::try_from(ls) {
             state.push(pair.car);
             final_argc += 1;
             ls = pair.cdr;
@@ -188,7 +188,7 @@ primitive! { call_with_values state (producer: Value, consumer: Value) {
 
 fn values(state: &mut State) -> Result<Op, PgsError> {
     let argc = state.peek().unwrap();
-    let argc: usize = state.downcast(argc)?;
+    let argc: usize = argc.try_into()?;
     state.remove(argc + 1).unwrap(); // callee
     Ok(Op::Continue)
 }
@@ -395,7 +395,7 @@ primitive! { typ state (v: Value) {
 }}
 
 primitive! { flex_length state (v: Value) {
-    if let Ok(v) = state.downcast::<HeapValue<()>>(v) {
+    if let Ok(v) = HeapValue::<()>::try_from(v) {
         if let Some(len) = unsafe { (*v.header()).flex_length() } {
             state.push(len);
             state.push(1u16);
@@ -407,7 +407,7 @@ primitive! { flex_length state (v: Value) {
 }}
 
 primitive! { flex_ref state (v: Value, i: usize) {
-    if let Ok(v) = state.downcast::<HeapValue<()>>(v) {
+    if let Ok(v) = HeapValue::<()>::try_from(v) {
         if let Some(flex) = unsafe { (*v.header()).flex_fields() } {
             state.push(*flex.get(i).unwrap());
             state.push(1u16);
@@ -419,7 +419,7 @@ primitive! { flex_ref state (v: Value, i: usize) {
 }}
 
 primitive! { flex_set state (v: Value, i: usize, elem: Value) {
-    if let Ok(v) = state.downcast::<HeapValue<()>>(v) {
+    if let Ok(v) = HeapValue::<()>::try_from(v) {
         if let Some(flex) = unsafe { (*v.header_mut()).flex_fields_mut() } {
             *flex.get_mut(i).unwrap() = elem;
             state.push(Value::UNSPECIFIED);
