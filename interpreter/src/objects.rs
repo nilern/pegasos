@@ -469,10 +469,6 @@ pub struct PairData {
     pub cdr: Value
 }
 
-impl Pair {
-    pub fn new() -> Option<Self> { state::with_mut(|state| state.alloc::<PairData>()) }
-}
-
 impl Display for Pair {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "({}", self.car)?;
@@ -1063,7 +1059,7 @@ mod tests {
         let a = Value::from(5i16);
         let b = Value::from(8i16);
 
-        let mut p = Pair::new().unwrap();
+        let mut p: Pair = state::with_mut(|state| state.alloc().unwrap());
         p.car = a;
         p.cdr = b;
 
@@ -1100,7 +1096,7 @@ mod tests {
         let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let a = Value::from(5i16);
         let b = Value::from(8i16);
-        let mut p = Pair::new().unwrap();
+        let mut p: Pair = state::with_mut(|state| state.alloc().unwrap());
 
         assert_eq!(a.identity_hash(), Value::from(5i16).identity_hash());
 

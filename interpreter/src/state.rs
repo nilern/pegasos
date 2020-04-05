@@ -420,7 +420,7 @@ impl State {
     }
 
     pub unsafe fn cons(&mut self) {
-        let mut pair = with_gc_retry! { self () { Pair::new() } };
+        let mut pair: Pair = with_gc_retry! { self () { self.alloc() } };
         pair.cdr = self.stack.pop().unwrap();
         pair.car = self.stack.pop().unwrap();
         self.push(pair);
