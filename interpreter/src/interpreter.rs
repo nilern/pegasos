@@ -661,118 +661,118 @@ mod tests {
 
     #[test]
     fn test_const() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
-        state.push(Value::from('a'));
-        run(&mut state).unwrap();
+        state::with_mut(|state| state.push(Value::from('a')));
+        interpreter.run().unwrap();
 
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from('a'));
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::from('a'));
 
-        unsafe { state.push_string("foo") };
-        run(&mut state).unwrap();
-        let res: PgsString = state.pop().unwrap().unwrap();
+        unsafe { state::with_mut(|state| state.push_string("foo")) };
+        interpreter.run().unwrap();
+        let res: PgsString = state::with_mut(State::pop).unwrap().unwrap();
 
         assert_eq!(res.as_str(), "foo");
     }
 
     #[test]
     fn test_nil() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
-        state.push(Value::NIL);
-        let res = run(&mut state);
+        state::with_mut(|state| state.push(Value::NIL));
+        let res = interpreter.run();
 
         assert!(res.is_err());
     }
 
     #[test]
     fn test_variables() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(define foo 5)".chars()));
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::UNSPECIFIED);
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::UNSPECIFIED);
 
         let mut parser = Parser::new(Lexer::new("(set! foo 8)".chars()));
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::UNSPECIFIED);
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::UNSPECIFIED);
 
         let mut parser = Parser::new(Lexer::new("foo".chars()));
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(8i16));
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::from(8i16));
     }
 
     #[test]
     fn test_quote() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("'()".chars()));
 
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
 
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::NIL);
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::NIL);
 
         let mut parser = Parser::new(Lexer::new("(quote () ())".chars()));
 
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        assert!(run(&mut state).is_err());
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        assert!(interpreter.run().is_err());
     }
 
     #[test]
     fn test_begin() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(begin 42 23)".chars()));
 
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
 
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(23i16));
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::from(23i16));
 
         let mut parser = Parser::new(Lexer::new("(begin)".chars()));
 
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        assert!(run(&mut state).is_err());
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        assert!(interpreter.run().is_err());
     }
 
     #[test]
     fn test_if() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("(if #t 42 23)".chars()));
 
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
 
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(42i16));
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::from(42i16));
     }
 
     #[test]
     fn test_let() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let mut parser =
             Parser::new(Lexer::new("(let* ((a (if #f 5 8)) (b #f)) (if b 42 a))".chars()));
 
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
 
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(8i16));
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::from(8i16));
     }
 
     #[test]
     fn test_lambda() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
 
         let mut parser = Parser::new(Lexer::new("((lambda (a b) b) 5 8)".chars()));
 
-        unsafe { parser.sexprs(&mut state, "test").unwrap() };
-        run(&mut state).unwrap();
+        unsafe { state::with_mut(|state| parser.sexprs(state, "test")).unwrap() };
+        interpreter.run().unwrap();
 
-        assert_eq!(state.pop::<Value>().unwrap().unwrap(), Value::from(8i16));
+        assert_eq!(state::with_mut(State::pop::<Value>).unwrap().unwrap(), Value::from(8i16));
     }
 }

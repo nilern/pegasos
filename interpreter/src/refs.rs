@@ -32,15 +32,17 @@ pub trait DynamicType: Sized {
     type IsBytes: Bool;
     type IsFlex: Bool;
 
-    fn reify(state: &State) -> Type;
+    fn reify_via(state: &State) -> Type;
+    
+    fn reify() -> Type { state::with(Self::reify_via) }
 }
 
 impl<T: DynamicType> DynamicDowncast for HeapValue<T> {
     fn downcast(state: &State, v: Value) -> Result<Self, RuntimeError> {
-        if state.type_of(v) == T::reify(state) {
+        if state.type_of(v) == T::reify() {
             Ok(unsafe { Self::unchecked_downcast(v) })
         } else {
-            Err(RuntimeError::Type { expected: T::reify(state), value: v })
+            Err(RuntimeError::Type { expected: T::reify(), value: v })
         }
     }
 

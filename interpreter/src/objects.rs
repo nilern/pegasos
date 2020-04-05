@@ -194,7 +194,7 @@ impl DynamicType for VectorData {
     type IsBytes = False;
     type IsFlex = True;
 
-    fn reify(state: &State) -> Type { state.types().vector }
+    fn reify_via(state: &State) -> Type { state.types().vector }
 }
 
 #[repr(C)]
@@ -241,7 +241,7 @@ impl DynamicType for PgsStringData {
     type IsBytes = True;
     type IsFlex = True;
 
-    fn reify(state: &State) -> Type { state.types().string }
+    fn reify_via(state: &State) -> Type { state.types().string }
 }
 
 #[repr(C)]
@@ -291,7 +291,7 @@ impl DynamicType for SymbolData {
     type IsBytes = True;
     type IsFlex = True;
 
-    fn reify(state: &State) -> Type { state.types().symbol }
+    fn reify_via(state: &State) -> Type { state.types().symbol }
 }
 
 impl Deref for Symbol {
@@ -457,7 +457,7 @@ impl DynamicType for PairData {
     type IsBytes = False;
     type IsFlex = False;
 
-    fn reify(state: &State) -> Type { state.types().pair }
+    fn reify_via(state: &State) -> Type { state.types().pair }
 }
 
 #[repr(C)]
@@ -497,7 +497,7 @@ impl DynamicType for ClosureData {
     type IsBytes = False;
     type IsFlex = True;
 
-    fn reify(state: &State) -> Type { state.types().procedure }
+    fn reify_via(state: &State) -> Type { state.types().procedure }
 }
 
 impl Deref for Closure {
@@ -544,7 +544,7 @@ impl DynamicType for BindingsData {
     type IsBytes = False;
     type IsFlex = False;
 
-    fn reify(state: &State) -> Type { state.types().environment }
+    fn reify_via(state: &State) -> Type { state.types().environment }
 }
 
 #[repr(C)]
@@ -692,7 +692,7 @@ impl DynamicType for SyntaxObject {
     type IsBytes = False;
     type IsFlex = False;
 
-    fn reify(state: &State) -> Type { state.types().syntax }
+    fn reify_via(state: &State) -> Type { state.types().syntax }
 }
 
 #[repr(C)]
@@ -770,7 +770,7 @@ impl DynamicType for TypeData {
     type IsBytes = False;
     type IsFlex = True;
 
-    fn reify(state: &State) -> Type { state.types().typ }
+    fn reify_via(state: &State) -> Type { state.types().typ }
 }
 
 #[derive(Debug)]
@@ -962,7 +962,7 @@ impl DynamicType for FieldDescriptorData {
     type IsBytes = False;
     type IsFlex = False;
 
-    fn reify(state: &State) -> Type { state.types().field_descriptor }
+    fn reify_via(state: &State) -> Type { state.types().field_descriptor }
 }
 
 impl FieldDescriptor {

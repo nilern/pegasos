@@ -392,7 +392,7 @@ impl State {
 
     pub fn alloc<T: DynamicType<IsFlex = False>>(&mut self) -> Option<HeapValue<T>> {
         self.heap
-            .alloc(Object::new(T::reify(self)), size_of::<T>())
+            .alloc(Object::new(T::reify_via(self)), size_of::<T>())
             .map(|v| unsafe { transmute::<Value, HeapValue<T>>(v) })
     }
 
@@ -401,7 +401,7 @@ impl State {
     ) -> Option<HeapValue<T>> {
         self.heap
             .alloc(
-                Object::new(T::reify(self)),
+                Object::new(T::reify_via(self)),
                 size_of::<T>()
                     + size_of::<Fixnum>()
                     + if T::IsBytes::reify() { size_of::<u8>() } else { size_of::<Value>() }
@@ -557,7 +557,12 @@ impl State {
 
     pub unsafe fn define(&mut self) -> Result<(), RuntimeError> {
         let mut value = self.pop().unwrap().unwrap();
-        let mut name = self.pop().unwrap()?;
+        let name = self.pop().unwrap().unwrap();
+        let mut name = if self.type_of(name) == self.types().symbol {
+            Symbol::unchecked_downcast(name)
+        } else {
+            return Err(RuntimeError::Type { expected: self.types().symbol, value: name });
+        };
         with_gc_retry! { self (name, value) { self.env.insert(self, name, value).ok() }}
         Ok(())
     }
@@ -712,32 +717,38 @@ impl<'a> Iterator for Frames<'a> {
 mod tests {
     use super::*;
 
+    use crate::interpreter::Interpreter;
+
     #[test]
     fn test_gc() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 20, 1 << 20);
+
         let n = 4i16;
-        for i in 0..n {
-            state.push(i);
-        }
-        state.push(Value::NIL);
-        for _ in 0..n {
-            unsafe {
-                state.cons();
+
+        with_mut(|state| {
+            for i in 0..n {
+                state.push(i);
             }
-        }
+            state.push(Value::NIL);
+            for _ in 0..n {
+                unsafe {
+                    state.cons();
+                }
+            }
 
-        unsafe {
-            state.heap.prepare_collection();
-            state.collect_garbage();
-        }
-        unsafe {
-            state.heap.prepare_collection();
-            state.collect_garbage();
-        } // overwrite initial heap and generally cause more havoc
+            unsafe {
+                state.heap.prepare_collection();
+                state.collect_garbage();
+            }
+            unsafe {
+                state.heap.prepare_collection();
+                state.collect_garbage();
+            } // overwrite initial heap and generally cause more havoc
+        });
 
-        let mut ls = state.pop().unwrap().unwrap();
+        let mut ls = with_mut(State::pop).unwrap().unwrap();
         for i in 0..n {
-            let pair: Pair = state.downcast(ls).unwrap();
+            let pair: Pair = with(|state| state.downcast(ls)).unwrap();
             assert_eq!(pair.car, i.into());
             ls = pair.cdr;
         }

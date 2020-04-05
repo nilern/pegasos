@@ -342,37 +342,39 @@ impl<I: Iterator<Item = char>> Parser<I> {
 mod tests {
     use super::*;
 
+    use super::super::interpreter::Interpreter;
     use super::super::objects::{Symbol, Syntax, Vector};
+    use super::super::state;
 
     #[test]
     fn test_const() {
-        let mut state = State::new(&[], 1 << 16, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" 23 ".chars()));
 
-        unsafe {
+        state::with_mut(|state| unsafe {
             state.push_string("test");
-            parser.sexpr(&mut state).unwrap();
-        }
-        let parsed: Syntax = state.pop().unwrap().unwrap();
+            parser.sexpr(state).unwrap();
+        });
+        let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
 
         assert_eq!(parsed.datum, Value::from(23i16));
     }
 
     #[test]
     fn test_symbol() {
-        let mut state = State::new(&[], 1 << 16, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" foo ".chars()));
         unsafe {
-            state.push_symbol("foo");
+            state::with_mut(|state| state.push_symbol("foo"));
         }
-        let symbol: Symbol = state.pop().unwrap().unwrap();
+        let symbol: Symbol = state::with_mut(State::pop).unwrap().unwrap();
 
-        unsafe {
+        state::with_mut(|state| unsafe {
             state.push_string("test");
-            parser.sexpr(&mut state).unwrap();
-        }
-        let parsed: Syntax = state.pop().unwrap().unwrap();
-        let parsed: Symbol = state.downcast(parsed.datum).unwrap();
+            parser.sexpr(state).unwrap();
+        });
+        let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
+        let parsed: Symbol = state::with(|state| state.downcast(parsed.datum)).unwrap();
 
         assert_eq!(parsed.as_str(), symbol.as_str());
         assert_eq!(parsed.hash, symbol.hash);
@@ -380,63 +382,63 @@ mod tests {
 
     #[test]
     fn test_nil() {
-        let mut state = State::new(&[], 1 << 16, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" () ".chars()));
 
-        unsafe {
+        state::with_mut(|state| unsafe {
             state.push_string("test");
-            parser.sexpr(&mut state).unwrap();
-        }
-        let parsed: Syntax = state.pop().unwrap().unwrap();
+            parser.sexpr(state).unwrap();
+        });
+        let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
 
         assert_eq!(parsed.datum, Value::NIL);
     }
 
     #[test]
     fn test_proper() {
-        let mut state = State::new(&[], 1 << 16, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5) ".chars()));
 
-        unsafe {
+        state::with_mut(|state| unsafe {
             state.push_string("test");
-            parser.sexpr(&mut state).unwrap();
-        }
-        let parsed: Syntax = state.pop().unwrap().unwrap();
-        let parsed: Pair = state.downcast(parsed.datum).unwrap();
+            parser.sexpr(state).unwrap();
+        });
+        let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
+        let parsed: Pair = state::with(|state| state.downcast(parsed.datum)).unwrap();
 
-        assert_eq!(state.downcast::<Syntax>(parsed.car).unwrap().datum, Value::from(5i16));
+        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed.car)).unwrap().datum, Value::from(5i16));
         assert_eq!(parsed.cdr, Value::NIL);
     }
 
     #[test]
     fn test_improper() {
-        let mut state = State::new(&[], 1 << 16, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" (5 . 8) ".chars()));
 
-        unsafe {
+        state::with_mut(|state| unsafe {
             state.push_string("test");
-            parser.sexpr(&mut state).unwrap();
-        }
-        let parsed: Syntax = state.pop().unwrap().unwrap();
-        let parsed: Pair = state.downcast(parsed.datum).unwrap();
+            parser.sexpr(state).unwrap();
+        });
+        let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
+        let parsed: Pair = state::with(|state| state.downcast(parsed.datum)).unwrap();
 
-        assert_eq!(state.downcast::<Syntax>(parsed.car).unwrap().datum, Value::from(5i16));
-        assert_eq!(state.downcast::<Syntax>(parsed.cdr).unwrap().datum, Value::from(8i16));
+        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed.car)).unwrap().datum, Value::from(5i16));
+        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed.cdr)).unwrap().datum, Value::from(8i16));
     }
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(&[], 1 << 16, 1 << 20);
+        let mut interpreter = Interpreter::new(&[], 1 << 16, 1 << 20);
         let mut parser = Parser::new(Lexer::new(" #(5) ".chars()));
 
-        unsafe {
+        state::with_mut(|state| unsafe {
             state.push_string("test");
-            parser.sexpr(&mut state).unwrap();
-        }
-        let parsed: Syntax = state.pop().unwrap().unwrap();
-        let parsed: Vector = state.downcast(parsed.datum).unwrap();
+            parser.sexpr(state).unwrap();
+        });
+        let parsed: Syntax = state::with_mut(State::pop).unwrap().unwrap();
+        let parsed: Vector = state::with(|state| state.downcast(parsed.datum)).unwrap();
 
         assert_eq!(parsed.len(), 1);
-        assert_eq!(state.downcast::<Syntax>(parsed[0]).unwrap().datum, Value::from(5i16));
+        assert_eq!(state::with(|state| state.downcast::<Syntax>(parsed[0])).unwrap().datum, Value::from(5i16));
     }
 }
