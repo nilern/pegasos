@@ -365,7 +365,7 @@ primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line
     let mut column = column;
     let syntax = unsafe {
         with_gc_retry!{ state (datum, scopes, source, line, column) {
-            Syntax::new(state, datum, scopes, source, line, column)
+            Syntax::new(datum, scopes, source, line, column)
         }}
     };
     state.push(syntax);

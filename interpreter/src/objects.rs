@@ -200,9 +200,11 @@ impl DynamicType for VectorData {
 pub struct VectorData;
 
 impl Vector {
-    pub fn new(state: &mut State, len: Fixnum) -> Option<Self> {
+    fn new_in(state: &mut State, len: Fixnum) -> Option<Self> {
         state.alloc_flex::<VectorData>(len)
     }
+
+    pub fn new(len: Fixnum) -> Option<Self> { state::with_mut(|state| Self::new_in(state, len)) }
 }
 
 impl Deref for Vector {
@@ -247,11 +249,13 @@ impl DynamicType for PgsStringData {
 pub struct PgsStringData;
 
 impl PgsString {
-    pub fn new(state: &mut State, cs: &str) -> Option<Self> {
+    pub fn new(cs: &str) -> Option<Self> {
         let len = cs.len();
-        state.alloc_flex::<PgsStringData>(len.try_into().unwrap()).map(|res| {
-            unsafe { (*res.header_mut()).flex_bytes_mut().copy_from_slice(cs.as_bytes()) };
-            res
+        state::with_mut(|state| {
+            state.alloc_flex::<PgsStringData>(len.try_into().unwrap()).map(|res| {
+                unsafe { (*res.header_mut()).flex_bytes_mut().copy_from_slice(cs.as_bytes()) };
+                res
+            })
         })
     }
 }
@@ -306,7 +310,7 @@ impl DerefMut for Symbol {
 }
 
 impl Symbol {
-    pub fn new(state: &mut State, name: &str) -> Option<Self> { state.get_symbol(name) }
+    pub fn new(name: &str) -> Option<Self> { state::with_mut(|state| state.get_symbol(name)) }
 
     pub fn create(
         heap: &mut MemoryManager<Object>, symbol_t: Type, hash: u64, name: &str
@@ -466,7 +470,7 @@ pub struct PairData {
 }
 
 impl Pair {
-    pub fn new(state: &mut State) -> Option<Self> { state.alloc::<PairData>() }
+    pub fn new() -> Option<Self> { state::with_mut(|state| state.alloc::<PairData>()) }
 }
 
 impl Display for Pair {
@@ -517,11 +521,15 @@ pub struct ClosureData {
 }
 
 impl Closure {
-    pub fn new(state: &mut State, code: Primop, clover_count: Fixnum) -> Option<Self> {
+    pub fn new_in(state: &mut State, code: Primop, clover_count: Fixnum) -> Option<Self> {
         state.alloc_flex::<ClosureData>(clover_count).map(|mut res| {
             res.code = code;
             res
         })
+    }
+
+    pub fn new(code: Primop, clover_count: Fixnum) -> Option<Self> {
+        state::with_mut(|state| Self::new_in(state, code, clover_count))
     }
 
     pub fn clovers(&self) -> &[Value] { unsafe { (*self.header()).flex_slots() } }
@@ -555,10 +563,10 @@ pub struct BindingsData {
 }
 
 impl Bindings {
-    pub fn new(state: &mut State, parent: Option<Bindings>) -> Option<Bindings> {
+    pub fn new_in(state: &mut State, parent: Option<Bindings>) -> Option<Bindings> {
         state.alloc::<BindingsData>().and_then(|mut bindings| {
-            Vector::new(state, 2.into()).and_then(|keys| {
-                Vector::new(state, 2.into()).map(|values| {
+            Vector::new_in(state, 2.into()).and_then(|keys| {
+                Vector::new_in(state, 2.into()).map(|values| {
                     bindings.parent = parent.map_or(Value::FALSE, Value::from);
                     bindings.keys = keys; // keys are already VACANT (= 0) initialized
                     bindings.values = values;
@@ -567,6 +575,10 @@ impl Bindings {
                 })
             })
         })
+    }
+
+    pub fn new(parent: Option<Bindings>) -> Option<Bindings> {
+        state::with_mut(|state| Self::new_in(state, parent))
     }
 
     const VACANT: Value = Value::ZERO;
@@ -646,8 +658,8 @@ impl Bindings {
     fn rehash(mut self, state: &mut State) -> Option<()> {
         let len = (2 * self.keys.len()).try_into().unwrap();
 
-        Vector::new(state, len).and_then(|mut keys| {
-            Vector::new(state, len).map(|mut values| {
+        Vector::new_in(state, len).and_then(|mut keys| {
+            Vector::new_in(state, len).map(|mut values| {
                 swap(&mut self.keys, &mut keys);
                 swap(&mut self.values, &mut values);
 
@@ -705,15 +717,17 @@ pub struct SyntaxObject {
 
 impl Syntax {
     pub fn new(
-        state: &mut State, datum: Value, scopes: Value, source: Value, line: Value, column: Value
+        datum: Value, scopes: Value, source: Value, line: Value, column: Value
     ) -> Option<Self> {
-        state.alloc::<SyntaxObject>().map(|mut syn| {
-            syn.datum = datum;
-            syn.scopes = scopes;
-            syn.source = source;
-            syn.line = line;
-            syn.column = column;
-            syn
+        state::with_mut(|state| {
+            state.alloc::<SyntaxObject>().map(|mut syn| {
+                syn.datum = datum;
+                syn.scopes = scopes;
+                syn.source = source;
+                syn.line = line;
+                syn.column = column;
+                syn
+            })
         })
     }
 }
@@ -783,7 +797,7 @@ pub struct TypeData {
 }
 
 impl Type {
-    pub fn new(
+    pub fn new_in(
         state: &mut State, is_bytes: bool, is_flex: bool, name: Symbol, parent: Option<Value>,
         min_size: Fixnum, fields: &[FieldDescriptor]
     ) -> Option<Self> {
@@ -795,6 +809,15 @@ impl Type {
             res.min_size = min_size;
             res.fields_mut().copy_from_slice(fields);
             res
+        })
+    }
+
+    pub fn new(
+        is_bytes: bool, is_flex: bool, name: Symbol, parent: Option<Value>, min_size: Fixnum,
+        fields: &[FieldDescriptor]
+    ) -> Option<Self> {
+        state::with_mut(|state| {
+            Self::new_in(state, is_bytes, is_flex, name, parent, min_size, fields)
         })
     }
 }
@@ -965,11 +988,15 @@ impl DynamicType for FieldDescriptorData {
 }
 
 impl FieldDescriptor {
-    pub fn new(state: &mut State, is_mutable: bool, size: Fixnum, name: Symbol) -> Option<Self> {
+    pub fn new_in(state: &mut State, is_mutable: bool, size: Fixnum, name: Symbol) -> Option<Self> {
         state.alloc::<FieldDescriptorData>().map(|mut res| {
             *res = FieldDescriptorData { is_mutable: is_mutable.into(), size, name };
             res
         })
+    }
+
+    pub fn new(is_mutable: bool, size: Fixnum, name: Symbol) -> Option<Self> {
+        state::with_mut(|state| Self::new_in(state, is_mutable, size, name))
     }
 }
 
@@ -986,15 +1013,17 @@ impl Display for FieldDescriptor {
 mod tests {
     use super::*;
 
+    use crate::interpreter::Interpreter;
+
     use std::convert::TryInto;
 
     #[test]
     fn test_vector() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let len = 7;
         let i = 3;
 
-        let mut vec = Vector::new(&mut state, len.try_into().unwrap()).unwrap();
+        let mut vec = Vector::new(len.try_into().unwrap()).unwrap();
 
         assert_eq!(vec.len(), len);
         assert_eq!(vec[i], Value::from(0i16));
@@ -1006,21 +1035,21 @@ mod tests {
 
     #[test]
     fn test_string() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let cs = "foo";
 
-        let s = PgsString::new(&mut state, cs).unwrap();
+        let s = PgsString::new(cs).unwrap();
 
         assert_eq!(s.as_str(), cs);
     }
 
     #[test]
     fn test_symbol() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let name = "foo";
 
-        let s = Symbol::new(&mut state, name).unwrap();
-        let t = Symbol::new(&mut state, name).unwrap();
+        let s = Symbol::new(name).unwrap();
+        let t = Symbol::new(name).unwrap();
 
         assert_eq!(s.as_str(), name);
         assert!(s.hash != 0);
@@ -1030,11 +1059,11 @@ mod tests {
 
     #[test]
     fn test_pair() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let a = Value::from(5i16);
         let b = Value::from(8i16);
 
-        let mut p = Pair::new(&mut state).unwrap();
+        let mut p = Pair::new().unwrap();
         p.car = a;
         p.cdr = b;
 
@@ -1044,21 +1073,23 @@ mod tests {
 
     #[test]
     fn test_bindings() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
-        let bindings = Bindings::new(&mut state, None).unwrap();
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
+        let bindings = Bindings::new(None).unwrap();
         let a = Value::from(5i16);
         let b = Value::from(8i16);
-        let foo = unsafe {
+        let foo = state::with_mut(|state| unsafe {
             state.push_symbol("foo");
             state.pop().unwrap().unwrap()
-        };
-        let bar = unsafe {
+        });
+        let bar = state::with_mut(|state| unsafe {
             state.push_symbol("bar");
             state.pop().unwrap().unwrap()
-        };
+        });
 
-        bindings.insert(&mut state, foo, a).unwrap();
-        bindings.insert(&mut state, bar, b).unwrap();
+        state::with_mut(|state| {
+            bindings.insert(state, foo, a).unwrap();
+            bindings.insert(state, bar, b).unwrap();
+        });
 
         assert_eq!(bindings.get(foo).unwrap(), a);
         assert_eq!(bindings.get(bar).unwrap(), b);
@@ -1066,10 +1097,10 @@ mod tests {
 
     #[test]
     fn test_identity_hash() {
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let a = Value::from(5i16);
         let b = Value::from(8i16);
-        let mut p = Pair::new(&mut state).unwrap();
+        let mut p = Pair::new().unwrap();
 
         assert_eq!(a.identity_hash(), Value::from(5i16).identity_hash());
 

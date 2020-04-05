@@ -291,7 +291,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
             match self.sexpr(state) {
                 Ok(Some(())) => {
                     // { source (data prev)? datum }
-                    let mut pair = with_gc_retry! { state () { Pair::new(state) } };
+                    let mut pair = with_gc_retry! { state () { Pair::new() } };
 
                     let parsed: Value = state.pop().unwrap().unwrap(); // { source (data prev)? }
                     if nonempty {

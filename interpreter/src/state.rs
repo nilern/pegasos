@@ -145,16 +145,16 @@ impl State {
                 fields.len() == size_of::<T>() / size_of::<Value>() + T::IsFlex::reify() as usize
             );
 
-            let name = Symbol::new(state, &format!("<{}>", name)).unwrap();
+            let name = state.get_symbol(&format!("<{}>", name)).unwrap();
             let is_flex = T::IsFlex::reify();
             let fields: Vec<FieldDescriptor> = fields
                 .iter()
                 .map(|(mutable, size, name)| {
-                    let name = Symbol::new(state, name).unwrap();
-                    FieldDescriptor::new(state, *mutable, *size, name).unwrap()
+                    let name = state.get_symbol(name).unwrap();
+                    FieldDescriptor::new_in(state, *mutable, *size, name).unwrap()
                 })
                 .collect();
-            Type::new(
+            Type::new_in(
                 state,
                 T::IsBytes::reify(),
                 is_flex,
@@ -246,31 +246,31 @@ impl State {
                 field_descriptor
             };
 
-            res.object_types.named.typ.name = Symbol::new(&mut res, "<type>").unwrap();
-            let is_bytes_symbol = Symbol::new(&mut res, "bytes?").unwrap();
-            let is_flex_symbol = Symbol::new(&mut res, "flex?").unwrap();
-            let name_symbol = Symbol::new(&mut res, "name").unwrap();
-            let parent_symbol = Symbol::new(&mut res, "parent").unwrap();
-            let min_size_symbol = Symbol::new(&mut res, "min-size").unwrap();
-            let fields_symbol = Symbol::new(&mut res, "fields").unwrap();
+            res.object_types.named.typ.name = res.get_symbol("<type>").unwrap();
+            let is_bytes_symbol = res.get_symbol("bytes?").unwrap();
+            let is_flex_symbol = res.get_symbol("flex?").unwrap();
+            let name_symbol = res.get_symbol("name").unwrap();
+            let parent_symbol = res.get_symbol("parent").unwrap();
+            let min_size_symbol = res.get_symbol("min-size").unwrap();
+            let fields_symbol = res.get_symbol("fields").unwrap();
             let type_fields = [
-                FieldDescriptor::new(&mut res, false, value_size, is_bytes_symbol).unwrap(),
-                FieldDescriptor::new(&mut res, false, value_size, is_flex_symbol).unwrap(),
-                FieldDescriptor::new(&mut res, false, value_size, name_symbol).unwrap(),
-                FieldDescriptor::new(&mut res, false, value_size, parent_symbol).unwrap(),
-                FieldDescriptor::new(&mut res, false, value_size, min_size_symbol).unwrap(),
-                FieldDescriptor::new(&mut res, false, value_size, fields_symbol).unwrap()
+                FieldDescriptor::new_in(&mut res, false, value_size, is_bytes_symbol).unwrap(),
+                FieldDescriptor::new_in(&mut res, false, value_size, is_flex_symbol).unwrap(),
+                FieldDescriptor::new_in(&mut res, false, value_size, name_symbol).unwrap(),
+                FieldDescriptor::new_in(&mut res, false, value_size, parent_symbol).unwrap(),
+                FieldDescriptor::new_in(&mut res, false, value_size, min_size_symbol).unwrap(),
+                FieldDescriptor::new_in(&mut res, false, value_size, fields_symbol).unwrap()
             ];
             res.object_types.named.typ.fields_mut().copy_from_slice(&type_fields);
 
             res.object_types.named.field_descriptor.name =
-                Symbol::new(&mut res, "<field-descriptor>").unwrap();
-            let mutable_symbol = Symbol::new(&mut res, "mutable").unwrap();
-            let size_symbol = Symbol::new(&mut res, "size").unwrap();
+                res.get_symbol("<field-descriptor>").unwrap();
+            let mutable_symbol = res.get_symbol("mutable").unwrap();
+            let size_symbol = res.get_symbol("size").unwrap();
             let field_descriptor_fields = [
-                FieldDescriptor::new(&mut res, false, value_size, mutable_symbol).unwrap(),
-                FieldDescriptor::new(&mut res, false, value_size, size_symbol).unwrap(),
-                FieldDescriptor::new(&mut res, false, value_size, name_symbol).unwrap()
+                FieldDescriptor::new_in(&mut res, false, value_size, mutable_symbol).unwrap(),
+                FieldDescriptor::new_in(&mut res, false, value_size, size_symbol).unwrap(),
+                FieldDescriptor::new_in(&mut res, false, value_size, name_symbol).unwrap()
             ];
             res.object_types
                 .named
@@ -278,21 +278,21 @@ impl State {
                 .fields_mut()
                 .copy_from_slice(&field_descriptor_fields);
 
-            res.object_types.named.symbol.name = Symbol::new(&mut res, "<symbol>").unwrap();
-            let hash_symbol = Symbol::new(&mut res, "hash").unwrap();
+            res.object_types.named.symbol.name = res.get_symbol("<symbol>").unwrap();
+            let hash_symbol = res.get_symbol("hash").unwrap();
             let symbol_fields = [
-                FieldDescriptor::new(
+                FieldDescriptor::new_in(
                     &mut res,
                     false,
                     (size_of::<u64>() as u16).into(),
                     hash_symbol
                 )
                 .unwrap(),
-                FieldDescriptor::new(&mut res, false, byte_size.into(), name_symbol).unwrap()
+                FieldDescriptor::new_in(&mut res, false, byte_size.into(), name_symbol).unwrap()
             ];
             res.object_types.named.symbol.fields_mut().copy_from_slice(&symbol_fields);
 
-            res.env = Bindings::new(&mut res, None).unwrap();
+            res.env = Bindings::new_in(&mut res, None).unwrap();
 
             for &typ in res.object_types.indexed.clone().iter() {
                 res.env.insert(&mut res, Type::unchecked_downcast(typ).name, typ).unwrap();
@@ -300,9 +300,10 @@ impl State {
 
             for tag in Tag::iter() {
                 if tag != Tag::ORef {
-                    let name = Symbol::new(&mut res, &format!("{}", tag)).unwrap();
+                    let name = res.get_symbol(&format!("{}", tag)).unwrap();
                     // TODO: Make these not total lies:
-                    let typ = Type::new(&mut res, true, false, name, None, 0.into(), &[]).unwrap();
+                    let typ =
+                        Type::new_in(&mut res, true, false, name, None, 0.into(), &[]).unwrap();
                     (*typ.header_mut()).header = Header::from_hash(tag as usize);
                     res.immediate_types[tag as usize] = typ.into();
                     res.env.insert(&mut res, name, typ.into()).unwrap();
@@ -409,29 +410,29 @@ impl State {
     }
 
     pub unsafe fn push_string(&mut self, s: &str) {
-        let v = with_gc_retry! { self () { PgsString::new(self, s) } };
+        let v = with_gc_retry! { self () { PgsString::new(s) } };
         self.push(v)
     }
 
     pub unsafe fn push_symbol(&mut self, name: &str) {
-        let v = with_gc_retry! { self () { Symbol::new(self, name) } };
+        let v = with_gc_retry! { self () { self.get_symbol(name) } };
         self.push(v)
     }
 
     pub unsafe fn cons(&mut self) {
-        let mut pair = with_gc_retry! { self () { Pair::new(self) } };
+        let mut pair = with_gc_retry! { self () { Pair::new() } };
         pair.cdr = self.stack.pop().unwrap();
         pair.car = self.stack.pop().unwrap();
         self.push(pair);
     }
 
     pub unsafe fn push_vector(&mut self, len: Fixnum) {
-        let vec = with_gc_retry! { self () { Vector::new(self, len) }};
+        let vec = with_gc_retry! { self () { Vector::new(len) }};
         self.push(vec);
     }
 
     pub unsafe fn vector(&mut self, len: Fixnum) {
-        let mut vec = with_gc_retry! { self () { Vector::new(self, len) } };
+        let mut vec = with_gc_retry! { self () { Vector::new(len) } };
         let len: usize = len.into();
         vec.copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
@@ -439,7 +440,7 @@ impl State {
     }
 
     pub unsafe fn closure(&mut self, code: Primop, len: Fixnum) {
-        let mut f = with_gc_retry! { self () { Closure::new(self, code, len) } };
+        let mut f = with_gc_retry! { self () { Closure::new(code, len) } };
         let len: usize = len.into();
         f.clovers_mut().copy_from_slice(&self.stack[self.stack.len() - len..]);
         self.stack.truncate(self.stack.len() - len);
@@ -447,7 +448,7 @@ impl State {
     }
 
     pub unsafe fn push_primitive(&mut self, code: Primop) {
-        let f = with_gc_retry! { self () { Closure::new(self, code, 0.into()) } };
+        let f = with_gc_retry! { self () { Closure::new_in(self, code, 0.into()) } };
         self.push(f);
     }
 
@@ -457,7 +458,7 @@ impl State {
         let column = loc.pos.column.try_into()?;
         let mut source = loc.source;
         let syntax = with_gc_retry! { self (datum, source) {
-            Syntax::new(self, datum, Value::FALSE, source, line, column)
+            Syntax::new(datum, Value::FALSE, source, line, column)
         }};
         self.push(syntax);
         Ok(())
@@ -475,7 +476,6 @@ impl State {
 
                 let t = with_gc_retry! { self (name, parent) {
                     Type::new(
-                        self,
                         is_bytes,
                         is_flex,
                         name,
@@ -541,7 +541,7 @@ impl State {
     pub fn set_env(&mut self, env: Bindings) { self.env = env }
 
     pub unsafe fn push_scope(&mut self) {
-        self.env = with_gc_retry! { self () { Bindings::new(self, Some(self.env)) } };
+        self.env = with_gc_retry! { self () { Bindings::new(Some(self.env)) } };
     }
 
     pub fn lookup(&mut self) -> Result<(), RuntimeError> {

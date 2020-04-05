@@ -196,9 +196,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                 _ =>
                     return Ok((
                         pos,
-                        Token::Identifier(
-                            with_gc_retry! { state () { Symbol::new(state, &self.buf) } }
-                        )
+                        Token::Identifier(with_gc_retry! { state () { Symbol::new(&self.buf) } })
                     )),
             }
         }
@@ -223,7 +221,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                     return Ok((
                         pos,
                         Token::Const(
-                            with_gc_retry! { state () { PgsString::new(state, &self.buf) } }.into()
+                            with_gc_retry! { state () { PgsString::new(&self.buf) } }.into()
                         )
                     ));
                 },
@@ -317,19 +315,22 @@ impl<I: Iterator<Item = char>> Lexer<I> {
 mod tests {
     use super::*;
 
+    use crate::interpreter::Interpreter;
+    use crate::state;
+
     #[test]
     fn test_lexer() {
         use Token::*;
 
-        let mut state = State::new(&[], 1 << 20, 1 << 20);
-        let foo: Symbol = Symbol::new(&mut state, "foo").unwrap();
+        let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
+        let foo: Symbol = Symbol::new("foo").unwrap();
 
         let input = "  (23 #f\n foo )  ";
         let mut lexer = Lexer::new(input.chars());
 
         let mut tokens = Vec::new();
 
-        while let Some(res) = unsafe { lexer.next(&mut state) } {
+        while let Some(res) = unsafe { state::with_mut(|state| lexer.next(state)) } {
             tokens.push(res.unwrap());
         }
 
