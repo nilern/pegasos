@@ -21,10 +21,10 @@ mod primitives;
 mod refs;
 mod util;
 
-use interpreter::run;
+use interpreter::Interpreter;
 use lexer::Lexer;
 use parser::Parser;
-use refs::{StatefulDisplay, Value};
+use refs::Value;
 use state::State;
 
 const PROMPT: &str = "pegasos> ";
@@ -57,7 +57,7 @@ fn main() {
 
     assert!(min_heap <= max_heap);
 
-    let mut state = State::new(&path, min_heap << 10, max_heap << 10);
+    let mut interpreter = Interpreter::new(&path, min_heap << 10, max_heap << 10);
     let mut editor = rustyline::Editor::<()>::new();
 
     for path in files {
@@ -67,23 +67,16 @@ fn main() {
         });
         let mut parser = Parser::new(Lexer::new(contents.chars()));
 
-        match unsafe { parser.sexprs(&mut state, path.to_str().unwrap()) } {
-            Ok(()) => match run(&mut state) {
+        match unsafe { state::with_mut(|state| parser.sexprs(state, path.to_str().unwrap())) } {
+            Ok(()) => match interpreter.run() {
                 Ok(()) => {},
                 Err(err) => {
-                    writeln!(
-                        stderr(),
-                        "Error loading {}: {}",
-                        path.display(),
-                        err.fmt_wrap(&state)
-                    )
-                    .unwrap();
+                    writeln!(stderr(), "Error loading {}: {}", path.display(), err).unwrap();
                     exit(1);
                 }
             },
             Err(err) => {
-                writeln!(stderr(), "Error reading {}: {}", path.display(), err.fmt_wrap(&state))
-                    .unwrap();
+                writeln!(stderr(), "Error reading {}: {}", path.display(), err).unwrap();
                 exit(1);
             }
         }
@@ -94,25 +87,25 @@ fn main() {
             Ok(line) => {
                 editor.add_history_entry(line.as_str());
 
-                state.unwind();
+                state::with_mut(State::unwind);
                 let mut parser = Parser::new(Lexer::new(line.chars()));
-                match unsafe { parser.sexprs(&mut state, "REPL") } {
-                    Ok(()) => match run(&mut state) {
+                match unsafe { state::with_mut(|state| parser.sexprs(state, "REPL")) } {
+                    Ok(()) => match interpreter.run() {
                         Ok(()) => println!(
                             "Ack, result: {}",
-                            state.pop::<Value>().unwrap().unwrap().fmt_wrap(&state)
+                            state::with_mut(State::pop::<Value>).unwrap().unwrap()
                         ),
                         Err(err) => {
-                            println!("Runtime error: {}", err.fmt_wrap(&state));
+                            println!("Runtime error: {}", err);
 
                             if debug {
                                 println!("");
-                                unsafe { state.dump(&mut stderr()).unwrap() };
+                                unsafe { state::with(|state| state.dump(&mut stderr())).unwrap() };
                                 println!("\n");
                             }
                         }
                     },
-                    Err(err) => println!("Parse error: {}", err.fmt_wrap(&state))
+                    Err(err) => println!("Parse error: {}", err)
                 }
             },
             Err(ReadlineError::Interrupted) => {

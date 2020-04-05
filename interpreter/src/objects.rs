@@ -14,9 +14,9 @@ use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager, ObjectReference};
 use super::refs::{
-    DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, StatefulDisplay, UnpackedValue, Value
+    DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, UnpackedValue, Value
 };
-use super::state::State;
+use super::state::{self, State};
 use super::util::{False, True};
 
 // ---
@@ -34,19 +34,19 @@ pub enum UnpackedHeapValue {
     Other(Value)
 }
 
-impl StatefulDisplay for UnpackedHeapValue {
-    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+impl Display for UnpackedHeapValue {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
             UnpackedHeapValue::String(s) => write!(f, "{}", s),
             UnpackedHeapValue::Symbol(s) => write!(f, "{}", s),
-            UnpackedHeapValue::Pair(p) => p.st_fmt(state, f),
-            UnpackedHeapValue::Vector(v) => v.st_fmt(state, f),
+            UnpackedHeapValue::Pair(p) => p.fmt(f),
+            UnpackedHeapValue::Vector(v) => v.fmt(f),
             UnpackedHeapValue::Closure(proc) => write!(f, "{}", proc),
             UnpackedHeapValue::Bindings(env) => write!(f, "{}", env),
-            UnpackedHeapValue::Syntax(s) => s.st_fmt(state, f),
+            UnpackedHeapValue::Syntax(s) => s.fmt(f),
             UnpackedHeapValue::Type(t) => write!(f, "{}", t),
             UnpackedHeapValue::FieldDescriptor(fd) => write!(f, "{}", fd),
-            UnpackedHeapValue::Other(v) => write!(f, "#<instance {}>", state.type_of(v))
+            UnpackedHeapValue::Other(v) => write!(f, "#<instance {}>", state::with(|state| state.type_of(v)))
         }
     }
 }
@@ -218,15 +218,15 @@ impl DerefMut for Vector {
     }
 }
 
-impl StatefulDisplay for Vector {
-    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
+impl Display for Vector {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "#(")?;
 
         for (i, v) in self.iter().enumerate() {
             if i > 0 {
                 write!(f, " ")?;
             }
-            write!(f, "{}", v.fmt_wrap(state))?;
+            write!(f, "{}", v)?;
         }
 
         write!(f, ")")
@@ -470,19 +470,19 @@ impl Pair {
     pub fn new(state: &mut State) -> Option<Self> { state.alloc::<PairData>() }
 }
 
-impl StatefulDisplay for Pair {
-    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
-        write!(f, "({}", self.car.fmt_wrap(state))?;
+impl Display for Pair {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "({}", self.car)?;
 
         let mut ls = self.cdr;
 
-        while let Ok(p) = state.downcast::<Pair>(ls) {
-            write!(f, " {}", p.car.fmt_wrap(state))?;
+        while let Ok(p) = state::with(|state| state.downcast::<Pair>(ls)) {
+            write!(f, " {}", p.car)?;
             ls = p.cdr;
         }
 
         if ls != Value::NIL {
-            write!(f, " . {}", ls.fmt_wrap(state))?;
+            write!(f, " . {}", ls)?;
         }
 
         write!(f, ")")
@@ -672,7 +672,7 @@ impl Bindings {
 
         for (k, v) in self.keys.iter().zip(self.values.iter()) {
             if *k != Self::VACANT {
-                writeln!(dest, "{} = {}", k.fmt_wrap(state), v.fmt_wrap(state))?;
+                writeln!(dest, "{} = {}", k, v)?;
             }
         }
 
@@ -756,16 +756,9 @@ impl Value {
     }
 }
 
-impl StatefulDisplay for Syntax {
-    fn st_fmt(&self, state: &State, f: &mut Formatter) -> fmt::Result {
-        write!(
-            f,
-            "#<syntax @ {}:{}:{} {}>",
-            self.source.fmt_wrap(state),
-            self.line.fmt_wrap(state),
-            self.column.fmt_wrap(state),
-            self.datum.fmt_wrap(state)
-        )
+impl Display for Syntax {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "#<syntax @ {}:{}:{} {}>", self.source, self.line, self.column, self.datum)
     }
 }
 

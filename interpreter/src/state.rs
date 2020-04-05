@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::convert::TryInto;
 use std::env;
 use std::io;
@@ -17,7 +18,7 @@ use super::objects::{
 };
 use super::parser::Loc;
 use super::refs::{
-    DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, StatefulDisplay, Tag, Value
+    DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, Tag, Value
 };
 use super::util::{Bool, False, True};
 
@@ -42,6 +43,28 @@ macro_rules! with_gc_retry {
             }
         }
     }}
+}
+
+// ---
+
+thread_local! {
+    pub static STATE: RefCell<Option<State>> = RefCell::new(None);
+}
+
+pub fn initialize(path: &[PathBuf], initial_heap: usize, max_heap: usize) {
+    STATE.with(|state| {
+        if state.borrow().is_none() {
+            *state.borrow_mut() = Some(State::new(path, initial_heap, max_heap));
+        }
+    });
+}
+
+pub fn with<R, F: FnOnce(&State) -> R>(f: F) -> R {
+    STATE.with(|state| f(state.borrow().as_ref().unwrap()))
+}
+
+pub fn with_mut<R, F: FnOnce(&mut State) -> R>(f: F) -> R {
+    STATE.with(|state| f(state.borrow_mut().as_mut().unwrap()))
 }
 
 // ---
@@ -590,7 +613,7 @@ impl State {
             writeln!(dest, "{:?}", tag)?;
 
             for slot in slots.iter().rev() {
-                writeln!(dest, "\t{}", slot.fmt_wrap(self))?;
+                writeln!(dest, "\t{}", slot)?;
             }
         }
 
