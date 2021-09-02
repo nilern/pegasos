@@ -4,7 +4,6 @@ use std::iter::Peekable;
 
 use super::objects::{PgsString, Symbol};
 use super::refs::Value;
-use super::state::State;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Error {
@@ -88,11 +87,8 @@ impl<I: Iterator<Item = char>> Iterator for PosChars<I> {
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().map(|c| {
             let pos = self.pos;
-            self.pos = if c == '\n' {
-                Pos { line: pos.line + 1, column: 1 }
-            } else {
-                Pos { column: pos.column + 1, ..pos }
-            };
+            self.pos =
+                if c == '\n' { Pos { line: pos.line + 1, column: 1 } } else { Pos { column: pos.column + 1, ..pos } };
             (pos, c)
         })
     }
@@ -116,9 +112,7 @@ fn is_initial(c: char) -> bool { c.is_alphabetic() || SPECIAL_INITIALS.contains(
 
 const SPECIAL_SUBSEQUENTS: &str = "+-.@";
 
-fn is_subsequent(c: char) -> bool {
-    is_initial(c) || c.is_digit(10) || SPECIAL_SUBSEQUENTS.contains(c)
-}
+fn is_subsequent(c: char) -> bool { is_initial(c) || c.is_digit(10) || SPECIAL_SUBSEQUENTS.contains(c) }
 
 // ---
 
@@ -129,9 +123,7 @@ pub struct Lexer<I: Iterator<Item = char>> {
 }
 
 impl<I: Iterator<Item = char>> Lexer<I> {
-    pub fn new(chars: I) -> Self {
-        Self { head: None, chars: PosChars::new(chars.peekable()), buf: String::new() }
-    }
+    pub fn new(chars: I) -> Self { Self { head: None, chars: PosChars::new(chars.peekable()), buf: String::new() } }
 
     pub fn pos(&self) -> Pos {
         match self.head {
@@ -179,9 +171,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         }
     }
 
-    unsafe fn identifier(
-        &mut self, state: &mut State, prefix: &str
-    ) -> Result<(Pos, Token), Error> {
+    unsafe fn identifier(&mut self, prefix: &str) -> Result<(Pos, Token), Error> {
         let (pos, initial) = self.chars.next().unwrap(); // already checked that `is_initial`
         self.buf.clear();
         self.buf.push_str(prefix);
@@ -193,11 +183,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                     let _ = self.chars.next();
                     self.buf.push(c);
                 },
-                _ =>
-                    return Ok((
-                        pos,
-                        Token::Identifier(with_gc_retry! { state () { Symbol::new(&self.buf) } })
-                    )),
+                _ => return Ok((pos, Token::Identifier(Symbol::new(&self.buf))))
             }
         }
     }
@@ -209,7 +195,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         }
     }
 
-    unsafe fn string(&mut self, state: &mut State) -> Result<(Pos, Token), Error> {
+    unsafe fn string(&mut self) -> Result<(Pos, Token), Error> {
         let (pos, _) = self.chars.next().unwrap(); // must be '"', skip it
 
         self.buf.clear();
@@ -218,12 +204,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
             match self.peek_char() {
                 Some('"') => {
                     let _ = self.chars.next();
-                    return Ok((
-                        pos,
-                        Token::Const(
-                            with_gc_retry! { state () { PgsString::new(&self.buf) } }.into()
-                        )
-                    ));
+                    return Ok((pos, Token::Const(PgsString::new(&self.buf).into())));
                 },
                 Some(c) => {
                     let _ = self.chars.next();
@@ -234,15 +215,15 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         }
     }
 
-    pub unsafe fn peek(&mut self, state: &mut State) -> Option<Result<(Pos, Token), Error>> {
+    pub unsafe fn peek(&mut self) -> Option<Result<(Pos, Token), Error>> {
         if self.head.is_none() {
-            self.head = self.next(state);
+            self.head = self.next();
         }
 
         self.head
     }
 
-    pub unsafe fn next(&mut self, state: &mut State) -> Option<Result<(Pos, Token), Error>> {
+    pub unsafe fn next(&mut self) -> Option<Result<(Pos, Token), Error>> {
         use Token::*;
 
         self.head.take().or_else(|| loop {
@@ -279,7 +260,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                     let (pos, _) = self.chars.next().unwrap();
                     break Some(Ok((pos, Quote)));
                 },
-                Some('"') => break Some(self.string(state)),
+                Some('"') => break Some(self.string()),
                 Some('#') => {
                     let (pos, _) = self.chars.next().unwrap();
 
@@ -292,7 +273,7 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                         },
                         Some('#') => {
                             let _ = self.chars.next().unwrap();
-                            break Some(self.identifier(state, "##"));
+                            break Some(self.identifier("##"));
                         },
                         Some('\\') => {
                             let _ = self.chars.next().unwrap();
@@ -301,9 +282,8 @@ impl<I: Iterator<Item = char>> Lexer<I> {
                         _ => unimplemented!()
                     }
                 },
-                Some(c) if is_initial(c) => break Some(self.identifier(state, "")),
-                Some(c) if c.is_digit(10) || c == '+' || c == '-' =>
-                    break Some(self.number(Radix::Decimal)),
+                Some(c) if is_initial(c) => break Some(self.identifier("")),
+                Some(c) if c.is_digit(10) || c == '+' || c == '-' => break Some(self.number(Radix::Decimal)),
                 Some(c) => unimplemented!("{:?}", c),
                 None => break None
             }
@@ -316,21 +296,20 @@ mod tests {
     use super::*;
 
     use crate::interpreter::Interpreter;
-    use crate::state;
 
     #[test]
     fn test_lexer() {
         use Token::*;
 
         let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
-        let foo: Symbol = Symbol::new("foo").unwrap();
+        let foo: Symbol = unsafe { Symbol::new("foo") };
 
         let input = "  (23 #f\n foo )  ";
         let mut lexer = Lexer::new(input.chars());
 
         let mut tokens = Vec::new();
 
-        while let Some(res) = unsafe { state::with_mut(|state| lexer.next(state)) } {
+        while let Some(res) = unsafe { lexer.next() } {
             tokens.push(res.unwrap());
         }
 

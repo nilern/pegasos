@@ -67,12 +67,15 @@ fn main() {
         });
         let mut parser = Parser::new(Lexer::new(contents.chars()));
 
-        match unsafe { state::with_mut(|state| parser.sexprs(state, path.to_str().unwrap())) } {
-            Ok(()) => match interpreter.run() {
-                Ok(()) => {},
-                Err(err) => {
-                    writeln!(stderr(), "Error loading {}: {}", path.display(), err).unwrap();
-                    exit(1);
+        match unsafe { parser.sexprs(path.to_str().unwrap()) } {
+            Ok(stx) => {
+                state::with_mut(|state| state.push(stx));
+                match interpreter.run() {
+                    Ok(()) => {},
+                    Err(err) => {
+                        writeln!(stderr(), "Error loading {}: {}", path.display(), err).unwrap();
+                        exit(1);
+                    }
                 }
             },
             Err(err) => {
@@ -89,19 +92,20 @@ fn main() {
 
                 state::with_mut(State::unwind);
                 let mut parser = Parser::new(Lexer::new(line.chars()));
-                match unsafe { state::with_mut(|state| parser.sexprs(state, "REPL")) } {
-                    Ok(()) => match interpreter.run() {
-                        Ok(()) => println!(
-                            "Ack, result: {}",
-                            state::with_mut(State::pop::<Value>).unwrap().unwrap()
-                        ),
-                        Err(err) => {
-                            println!("Runtime error: {}", err);
+                match unsafe { parser.sexprs("REPL") } {
+                    Ok(stx) => {
+                        state::with_mut(|state| state.push(stx));
+                        match interpreter.run() {
+                            Ok(()) =>
+                                println!("Ack, result: {}", state::with_mut(State::pop::<Value>).unwrap().unwrap()),
+                            Err(err) => {
+                                println!("Runtime error: {}", err);
 
-                            if debug {
-                                println!("");
-                                unsafe { state::with(|state| state.dump(&mut stderr())).unwrap() };
-                                println!("\n");
+                                if debug {
+                                    println!("");
+                                    unsafe { state::with(|state| state.dump(&mut stderr())).unwrap() };
+                                    println!("\n");
+                                }
                             }
                         }
                     },

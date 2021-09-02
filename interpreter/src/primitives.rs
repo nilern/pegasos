@@ -172,8 +172,7 @@ fn apply(state: &mut State) -> Result<Op, PgsError> {
             unimplemented!()
         }
     } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, true), got: argc }
-            .into())
+        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, true), got: argc }.into())
     }
 }
 
@@ -241,12 +240,7 @@ fn make_vector(state: &mut State) -> Result<Op, PgsError> {
         },
         argc =>
         // TODO: arity is actually 1 | 2, not 2:
-            return Err(RuntimeError::Argc {
-                callee: state.get(argc).unwrap(),
-                params: (2, false),
-                got: argc
-            }
-            .into()),
+            return Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, false), got: argc }.into()),
     }
 
     state.remove(1).unwrap(); // callee
@@ -293,12 +287,7 @@ fn fx_sub(state: &mut State) -> Result<Op, PgsError> {
         },
         _ =>
         // FIXME: arity is actually 1 | 2
-            Err(RuntimeError::Argc {
-                callee: state.get(argc).unwrap(),
-                params: (2, false),
-                got: argc
-            }
-            .into()),
+            Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (2, false), got: argc }.into()),
     }
 }
 
@@ -352,22 +341,12 @@ fn make(state: &mut State) -> Result<Op, PgsError> {
         state.push(1u16);
         Ok(Op::Continue)
     } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (1, true), got: argc }
-            .into())
+        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (1, true), got: argc }.into())
     }
 }
 
 primitive! { make_syntax state (datum: Value, scopes: Value, source: Value, line: Value, column: Value) {
-    let mut datum = datum;
-    let mut scopes = scopes;
-    let mut source = source;
-    let mut line = line;
-    let mut column = column;
-    let syntax = unsafe {
-        with_gc_retry!{ state (datum, scopes, source, line, column) {
-            Syntax::new(datum, scopes, source, line, column)
-        }}
-    };
+    let syntax = unsafe { Syntax::new(datum, scopes, source, line, column) };
     state.push(syntax);
     state.push(1u16);
     Ok(Op::Continue)
@@ -382,8 +361,7 @@ fn make_type(state: &mut State) -> Result<Op, PgsError> {
         state.push(1u16);
         Ok(Op::Continue)
     } else {
-        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (4, true), got: argc }
-            .into())
+        Err(RuntimeError::Argc { callee: state.get(argc).unwrap(), params: (4, true), got: argc }.into())
     }
 }
 

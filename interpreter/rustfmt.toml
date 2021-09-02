@@ -1,4 +1,5 @@
-comment_width = 100
+max_width = 120
+comment_width = 120
 fn_args_layout = "Compressed"
 fn_single_line = true
 match_arm_blocks = false

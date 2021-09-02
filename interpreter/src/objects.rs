@@ -14,7 +14,7 @@ use rand::{Rng, SeedableRng};
 
 use super::gc::{HeapObject, MemoryManager, ObjectReference};
 use super::refs::{DynamicDowncast, DynamicType, Fixnum, HeapValue, Primop, UnpackedValue, Value};
-use super::state::{self, State};
+use super::state::{self, with_retry, State};
 use super::util::{False, True};
 
 // ---
@@ -44,8 +44,7 @@ impl Display for UnpackedHeapValue {
             UnpackedHeapValue::Syntax(s) => s.fmt(f),
             UnpackedHeapValue::Type(t) => write!(f, "{}", t),
             UnpackedHeapValue::FieldDescriptor(fd) => write!(f, "{}", fd),
-            UnpackedHeapValue::Other(v) =>
-                write!(f, "#<instance {}>", state::with(|state| state.type_of(v))),
+            UnpackedHeapValue::Other(v) => write!(f, "#<instance {}>", state::with(|state| state.type_of(v)))
         }
     }
 }
@@ -137,9 +136,7 @@ impl HeapObject for Object {
 
     const LAPSED: Self::Ref = Value::ZERO; // This is fine since it's just for symbol table
 
-    fn is_alignment_hole(mem: *const Self) -> bool {
-        unsafe { transmute::<Type, usize>((*mem).typ) == 0 }
-    }
+    fn is_alignment_hole(mem: *const Self) -> bool { unsafe { transmute::<Type, usize>((*mem).typ) == 0 } }
 
     fn forward(&mut self, data: *const u8) { self.header.forward(data) }
 
@@ -200,11 +197,15 @@ impl DynamicType for VectorData {
 pub struct VectorData;
 
 impl Vector {
-    fn new_in(state: &mut State, len: Fixnum) -> Option<Self> {
-        state.alloc_flex::<VectorData>(len)
-    }
+    fn new_in(state: &mut State, len: Fixnum) -> Option<Self> { state.alloc_flex::<VectorData>(len) }
 
     pub fn new(len: Fixnum) -> Option<Self> { state::with_mut(|state| Self::new_in(state, len)) }
+
+    pub unsafe fn from_slice(elems: &[Value]) -> Self {
+        let mut vec = with_retry(|| Vector::new(elems.len().try_into().unwrap()));
+        vec.copy_from_slice(elems);
+        vec
+    }
 }
 
 impl Deref for Vector {
@@ -214,9 +215,7 @@ impl Deref for Vector {
 }
 
 impl DerefMut for Vector {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { (*self.header_mut()).flex_slots_mut() }
-    }
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { (*self.header_mut()).flex_slots_mut() } }
 }
 
 impl Display for Vector {
@@ -249,21 +248,21 @@ impl DynamicType for PgsStringData {
 pub struct PgsStringData;
 
 impl PgsString {
-    pub fn new(cs: &str) -> Option<Self> {
+    pub unsafe fn new(cs: &str) -> Self {
         let len = cs.len();
-        state::with_mut(|state| {
-            state.alloc_flex::<PgsStringData>(len.try_into().unwrap()).map(|res| {
-                unsafe { (*res.header_mut()).flex_bytes_mut().copy_from_slice(cs.as_bytes()) };
-                res
+        with_retry(|| {
+            state::with_mut(|state| {
+                state.alloc_flex::<PgsStringData>(len.try_into().unwrap()).map(|res| {
+                    (*res.header_mut()).flex_bytes_mut().copy_from_slice(cs.as_bytes());
+                    res
+                })
             })
         })
     }
 }
 
 impl PgsString {
-    pub fn as_str(&self) -> &str {
-        unsafe { str::from_utf8_unchecked((*self.header()).flex_bytes()) }
-    }
+    pub fn as_str(&self) -> &str { unsafe { str::from_utf8_unchecked((*self.header()).flex_bytes()) } }
 }
 
 impl Deref for PgsString {
@@ -304,36 +303,27 @@ impl Deref for Symbol {
 }
 
 impl DerefMut for Symbol {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self.data() as *mut Self::Target) }
-    }
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *(self.data() as *mut Self::Target) } }
 }
 
 impl Symbol {
-    pub fn new(name: &str) -> Option<Self> { state::with_mut(|state| state.get_symbol(name)) }
+    pub unsafe fn new(name: &str) -> Self { with_retry(|| state::with_mut(|state| state.get_symbol(name))) }
 
-    pub fn create(
-        heap: &mut MemoryManager<Object>, symbol_t: Type, hash: u64, name: &str
-    ) -> Option<Self> {
-        heap.alloc(
-            Object::new(symbol_t),
-            size_of::<SymbolData>() + size_of::<Fixnum>() + name.len()
+    pub fn create(heap: &mut MemoryManager<Object>, symbol_t: Type, hash: u64, name: &str) -> Option<Self> {
+        heap.alloc(Object::new(symbol_t), size_of::<SymbolData>() + size_of::<Fixnum>() + name.len()).map(
+            |res| unsafe {
+                let mut res = Symbol::unchecked_downcast(res);
+                res.hash = hash;
+                *((&mut *res as *mut SymbolData).add(1) as *mut Fixnum) = name.len().try_into().unwrap();
+                (*res.header_mut()).flex_bytes_mut().copy_from_slice(name.as_bytes());
+                res
+            }
         )
-        .map(|res| unsafe {
-            let mut res = Symbol::unchecked_downcast(res);
-            res.hash = hash;
-            *((&mut *res as *mut SymbolData).add(1) as *mut Fixnum) =
-                name.len().try_into().unwrap();
-            (*res.header_mut()).flex_bytes_mut().copy_from_slice(name.as_bytes());
-            res
-        })
     }
 }
 
 impl Symbol {
-    pub fn as_str(&self) -> &str {
-        unsafe { str::from_utf8_unchecked((*self.header()).flex_bytes()) }
-    }
+    pub fn as_str(&self) -> &str { unsafe { str::from_utf8_unchecked((*self.header()).flex_bytes()) } }
 }
 
 pub struct SymbolTable {
@@ -346,15 +336,11 @@ impl SymbolTable {
     const VACANT: Value = Value::FALSE;
     const TOMBSTONE: Value = Value::ZERO;
 
-    pub fn new() -> Self {
-        Self { symbols: vec![Self::VACANT; 2], occupancy: 0, hash_builder: RandomState::new() }
-    }
+    pub fn new() -> Self { Self { symbols: vec![Self::VACANT; 2], occupancy: 0, hash_builder: RandomState::new() } }
 
     /// Only returns `None` if symbol was not found and then allocating it
     /// failed.
-    pub fn get(
-        &mut self, heap: &mut MemoryManager<Object>, symbol_t: Type, name: &str
-    ) -> Option<Symbol> {
+    pub fn get(&mut self, heap: &mut MemoryManager<Object>, symbol_t: Type, name: &str) -> Option<Symbol> {
         self.ensure_vacancy();
 
         let hash = self.hash_key(name);
@@ -469,6 +455,14 @@ pub struct PairData {
     pub cdr: Value
 }
 
+impl Pair {
+    pub unsafe fn cons(car: Value, cdr: Value) -> Pair {
+        let mut p = with_retry(|| state::with_mut(State::alloc::<PairData>));
+        *p = PairData { car, cdr };
+        p
+    }
+}
+
 impl Display for Pair {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "({}", self.car)?;
@@ -506,9 +500,7 @@ impl Deref for Closure {
 }
 
 impl DerefMut for Closure {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self.data() as *mut Self::Target) }
-    }
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *(self.data() as *mut Self::Target) } }
 }
 
 #[repr(C)]
@@ -530,9 +522,7 @@ impl Closure {
 
     pub fn clovers(&self) -> &[Value] { unsafe { (*self.header()).flex_slots() } }
 
-    pub fn clovers_mut(&mut self) -> &mut [Value] {
-        unsafe { (*self.header_mut()).flex_slots_mut() }
-    }
+    pub fn clovers_mut(&mut self) -> &mut [Value] { unsafe { (*self.header_mut()).flex_slots_mut() } }
 }
 
 impl Display for Closure {
@@ -573,9 +563,7 @@ impl Bindings {
         })
     }
 
-    pub fn new(parent: Option<Bindings>) -> Option<Bindings> {
-        state::with_mut(|state| Self::new_in(state, parent))
-    }
+    pub fn new(parent: Option<Bindings>) -> Option<Bindings> { state::with_mut(|state| Self::new_in(state, parent)) }
 
     const VACANT: Value = Value::ZERO;
 
@@ -662,8 +650,7 @@ impl Bindings {
                 for (i, &key) in keys.iter().enumerate() {
                     match key {
                         Self::VACANT => {},
-                        name => self
-                            .insert_noresize(unsafe { Symbol::unchecked_downcast(name) }, values[i])
+                        name => self.insert_noresize(unsafe { Symbol::unchecked_downcast(name) }, values[i])
                     }
                 }
             })
@@ -712,17 +699,17 @@ pub struct SyntaxObject {
 }
 
 impl Syntax {
-    pub fn new(
-        datum: Value, scopes: Value, source: Value, line: Value, column: Value
-    ) -> Option<Self> {
-        state::with_mut(|state| {
-            state.alloc::<SyntaxObject>().map(|mut syn| {
-                syn.datum = datum;
-                syn.scopes = scopes;
-                syn.source = source;
-                syn.line = line;
-                syn.column = column;
-                syn
+    pub unsafe fn new(datum: Value, scopes: Value, source: Value, line: Value, column: Value) -> Self {
+        with_retry(|| {
+            state::with_mut(|state| {
+                state.alloc::<SyntaxObject>().map(|mut syn| {
+                    syn.datum = datum;
+                    syn.scopes = scopes;
+                    syn.source = source;
+                    syn.line = line;
+                    syn.column = column;
+                    syn
+                })
             })
         })
     }
@@ -735,14 +722,9 @@ impl Value {
             UnpackedValue::ORef(o) => match o.unpack() {
                 UnpackedHeapValue::Syntax(syntax) => syntax.datum.to_datum(state),
                 UnpackedHeapValue::Pair(pair) => {
-                    state.push(pair);
                     let car = pair.car.to_datum(state);
-                    state.push(car);
-                    let pair = transmute::<Value, Pair>(state.remove(1).unwrap());
                     let cdr = pair.cdr.to_datum(state);
-                    state.push(cdr);
-                    state.cons();
-                    state.pop().unwrap().unwrap()
+                    Pair::cons(car, cdr).into()
                 },
                 UnpackedHeapValue::Vector(vec) => {
                     let len = vec.len();
@@ -794,8 +776,8 @@ pub struct TypeData {
 
 impl Type {
     pub fn new_in(
-        state: &mut State, is_bytes: bool, is_flex: bool, name: Symbol, parent: Option<Value>,
-        min_size: Fixnum, fields: &[FieldDescriptor]
+        state: &mut State, is_bytes: bool, is_flex: bool, name: Symbol, parent: Option<Value>, min_size: Fixnum,
+        fields: &[FieldDescriptor]
     ) -> Option<Self> {
         state.alloc_flex::<TypeData>(fields.len().try_into().unwrap()).map(|mut res| {
             res.is_bytes = is_bytes.into();
@@ -812,16 +794,12 @@ impl Type {
         is_bytes: bool, is_flex: bool, name: Symbol, parent: Option<Value>, min_size: Fixnum,
         fields: &[FieldDescriptor]
     ) -> Option<Self> {
-        state::with_mut(|state| {
-            Self::new_in(state, is_bytes, is_flex, name, parent, min_size, fields)
-        })
+        state::with_mut(|state| Self::new_in(state, is_bytes, is_flex, name, parent, min_size, fields))
     }
 }
 
 impl TypeData {
-    fn field_count(&self) -> usize {
-        unsafe { (*((self as *const TypeData).add(1) as *const Fixnum)).into() }
-    }
+    fn field_count(&self) -> usize { unsafe { (*((self as *const TypeData).add(1) as *const Fixnum)).into() } }
 
     pub fn fields(&self) -> &[FieldDescriptor] {
         unsafe {
@@ -842,9 +820,8 @@ impl TypeData {
         let min_len = self.field_count();
 
         if self.is_flex != Value::FALSE {
-            let flex_len: usize = unsafe {
-                (*((instance as *const Object).add(1) as *const Fixnum).add(min_len - 1)).into()
-            };
+            let flex_len: usize =
+                unsafe { (*((instance as *const Object).add(1) as *const Fixnum).add(min_len - 1)).into() };
             min_len + flex_len
         } else {
             min_len
@@ -857,15 +834,11 @@ impl TypeData {
             let min_size: usize = self.min_size.into();
 
             let flex_len: usize = unsafe {
-                (*(((instance as *const Object).add(1) as *const u8)
-                    .add(min_size - size_of::<Fixnum>()) as *const Fixnum))
+                (*(((instance as *const Object).add(1) as *const u8).add(min_size - size_of::<Fixnum>())
+                    as *const Fixnum))
                     .into()
             };
-            let flex_size = if self.is_bytes != Value::FALSE {
-                flex_len
-            } else {
-                flex_len * size_of::<Value>()
-            };
+            let flex_size = if self.is_bytes != Value::FALSE { flex_len } else { flex_len * size_of::<Value>() };
 
             min_size + flex_size
         } else {
@@ -883,13 +856,11 @@ impl TypeData {
 
     unsafe fn instance_flex_len(&self, instance: &Object) -> Fixnum {
         *(((instance as *const Object).add(1) as *const u8)
-            .add(<Fixnum as Into<usize>>::into(self.min_size) - size_of::<Fixnum>())
-            as *const Fixnum)
+            .add(<Fixnum as Into<usize>>::into(self.min_size) - size_of::<Fixnum>()) as *const Fixnum)
     }
 
     unsafe fn instance_flex_ptr(&self, instance: &Object) -> *const u8 {
-        ((instance as *const Object).add(1) as *const u8)
-            .add(<Fixnum as Into<usize>>::into(self.min_size))
+        ((instance as *const Object).add(1) as *const u8).add(<Fixnum as Into<usize>>::into(self.min_size))
     }
 
     fn instance_flex_fields(&self, instance: &Object) -> Option<&[Value]> {
@@ -909,10 +880,7 @@ impl TypeData {
     }
 
     unsafe fn instance_flex_slots(&self, instance: &Object) -> &[Value] {
-        slice::from_raw_parts(
-            self.instance_flex_ptr(instance) as *const Value,
-            self.instance_flex_len(instance).into()
-        )
+        slice::from_raw_parts(self.instance_flex_ptr(instance) as *const Value, self.instance_flex_len(instance).into())
     }
 
     unsafe fn instance_flex_slots_mut<'a>(&self, instance: &'a mut Object) -> &'a mut [Value] {
@@ -923,17 +891,11 @@ impl TypeData {
     }
 
     unsafe fn instance_flex_bytes(&self, instance: &Object) -> &[u8] {
-        slice::from_raw_parts(
-            self.instance_flex_ptr(instance),
-            self.instance_flex_len(instance).into()
-        )
+        slice::from_raw_parts(self.instance_flex_ptr(instance), self.instance_flex_len(instance).into())
     }
 
     unsafe fn instance_flex_bytes_mut<'a>(&self, instance: &'a mut Object) -> &'a mut [u8] {
-        slice::from_raw_parts_mut(
-            self.instance_flex_ptr(instance) as *mut u8,
-            self.instance_flex_len(instance).into()
-        )
+        slice::from_raw_parts_mut(self.instance_flex_ptr(instance) as *mut u8, self.instance_flex_len(instance).into())
     }
 }
 
@@ -944,9 +906,7 @@ impl Deref for Type {
 }
 
 impl DerefMut for Type {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self.data() as *mut Self::Target) }
-    }
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *(self.data() as *mut Self::Target) } }
 }
 
 impl Debug for Type {
@@ -1034,7 +994,7 @@ mod tests {
         let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let cs = "foo";
 
-        let s = PgsString::new(cs).unwrap();
+        let s = unsafe { PgsString::new(cs) };
 
         assert_eq!(s.as_str(), cs);
     }
@@ -1044,8 +1004,8 @@ mod tests {
         let _ = Interpreter::new(&[], 1 << 20, 1 << 20);
         let name = "foo";
 
-        let s = Symbol::new(name).unwrap();
-        let t = Symbol::new(name).unwrap();
+        let s = unsafe { Symbol::new(name) };
+        let t = unsafe { Symbol::new(name) };
 
         assert_eq!(s.as_str(), name);
         assert!(s.hash != 0);

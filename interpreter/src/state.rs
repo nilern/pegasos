@@ -12,15 +12,23 @@ use super::error::PgsError;
 use super::gc::MemoryManager;
 use super::interpreter::RuntimeError;
 use super::objects::{
-    Bindings, BindingsData, Closure, ClosureData, FieldDescriptor, FieldDescriptorData, Header,
-    Object, Pair, PairData, PgsString, PgsStringData, Symbol, SymbolData, SymbolTable, Syntax,
-    SyntaxObject, Type, TypeData, Vector, VectorData
+    Bindings, BindingsData, Closure, ClosureData, FieldDescriptor, FieldDescriptorData, Header, Object, Pair, PairData,
+    PgsString, PgsStringData, Symbol, SymbolData, SymbolTable, Syntax, SyntaxObject, Type, TypeData, Vector,
+    VectorData
 };
 use super::parser::Loc;
 use super::refs::{DynamicDowncast, DynamicType, Fixnum, FrameTag, HeapValue, Primop, Tag, Value};
 use super::util::{Bool, False, True};
 
 // ---
+
+pub unsafe fn with_retry<T, F: Fn() -> Option<T>>(f: F) -> T {
+    f().or_else(|| {
+        with_mut(|state| State::collect_garbage(state));
+        f()
+    })
+    .expect("OOM")
+}
 
 #[macro_export]
 macro_rules! with_gc_retry {
@@ -57,9 +65,7 @@ pub fn initialize(path: &[PathBuf], initial_heap: usize, max_heap: usize) {
     });
 }
 
-pub fn with<R, F: FnOnce(&State) -> R>(f: F) -> R {
-    STATE.with(|state| f(state.borrow().as_ref().unwrap()))
-}
+pub fn with<R, F: FnOnce(&State) -> R>(f: F) -> R { STATE.with(|state| f(state.borrow().as_ref().unwrap())) }
 
 pub fn with_mut<R, F: FnOnce(&mut State) -> R>(f: F) -> R {
     STATE.with(|state| f(state.borrow_mut().as_mut().unwrap()))
@@ -73,7 +79,8 @@ pub struct State {
     pub heap: MemoryManager<Object>,
     symbol_table: SymbolTable,
     stack: Vec<Value>,
-    env: Bindings
+    pub env: Bindings,
+    pub shadow_stack: Vec<Value>
 }
 
 #[derive(Clone, Copy)]
@@ -117,9 +124,7 @@ impl State {
                     .heap
                     .alloc(
                         Object::new(type_t),
-                        size_of::<TypeData>()
-                            + size_of::<Fixnum>()
-                            + field_count as usize * size_of::<Value>()
+                        size_of::<TypeData>() + size_of::<Fixnum>() + field_count as usize * size_of::<Value>()
                     )
                     .unwrap()
             );
@@ -129,21 +134,15 @@ impl State {
                 is_flex: is_flex.into(),
                 name: Symbol::unchecked_downcast(Value::ZERO), // HACK
                 parent: Value::FALSE,
-                min_size: (size_of::<T>() + is_flex as usize * size_of::<Fixnum>())
-                    .try_into()
-                    .unwrap()
+                min_size: (size_of::<T>() + is_flex as usize * size_of::<Fixnum>()).try_into().unwrap()
             };
             *((&mut *t as *mut TypeData).add(1) as *mut Fixnum) = field_count.try_into().unwrap();
 
             t
         }
 
-        fn new_builtin_type<T: DynamicType>(
-            state: &mut State, name: &str, fields: &[(bool, Fixnum, &str)]
-        ) -> Type {
-            assert!(
-                fields.len() == size_of::<T>() / size_of::<Value>() + T::IsFlex::reify() as usize
-            );
+        fn new_builtin_type<T: DynamicType>(state: &mut State, name: &str, fields: &[(bool, Fixnum, &str)]) -> Type {
+            assert!(fields.len() == size_of::<T>() / size_of::<Value>() + T::IsFlex::reify() as usize);
 
             let name = state.get_symbol(&format!("<{}>", name)).unwrap();
             let is_flex = T::IsFlex::reify();
@@ -172,7 +171,8 @@ impl State {
             stack: Vec::with_capacity(Self::STACK_LEN),
             env: unsafe { transmute(Value::ZERO) }, // HACK
             immediate_types: [Value::FALSE; 8],     // So that the ORef one becomes #f
-            object_types: BuiltinObjectTypes { indexed: [Value::ZERO; 9] }
+            object_types: BuiltinObjectTypes { indexed: [Value::ZERO; 9] },
+            shadow_stack: Vec::new()
         };
 
         unsafe {
@@ -193,9 +193,7 @@ impl State {
                 min_size: (size_of::<TypeData>() + size_of::<Value>()).try_into().unwrap()
             };
             *((&mut *typ as *mut TypeData).add(1) as *mut Fixnum) =
-                ((size_of::<TypeData>() + size_of::<Fixnum>()) / size_of::<Value>())
-                    .try_into()
-                    .unwrap();
+                ((size_of::<TypeData>() + size_of::<Fixnum>()) / size_of::<Value>()).try_into().unwrap();
             res.object_types.named.typ = typ;
 
             let field_descriptor = new_pretype::<FieldDescriptorData>(&mut res, typ);
@@ -206,16 +204,10 @@ impl State {
             let value_size: Fixnum = size_of::<Value>().try_into().unwrap();
             let byte_size: Fixnum = size_of::<u8>().try_into().unwrap();
 
-            let string = new_builtin_type::<PgsStringData>(&mut res, "string", &[(
-                true, byte_size, "bytes"
-            )]);
-            let pair = new_builtin_type::<PairData>(&mut res, "pair", &[
-                (true, value_size, "car"),
-                (true, value_size, "cdr")
-            ]);
-            let vector = new_builtin_type::<VectorData>(&mut res, "vector", &[(
-                true, value_size, "elements"
-            )]);
+            let string = new_builtin_type::<PgsStringData>(&mut res, "string", &[(true, byte_size, "bytes")]);
+            let pair =
+                new_builtin_type::<PairData>(&mut res, "pair", &[(true, value_size, "car"), (true, value_size, "cdr")]);
+            let vector = new_builtin_type::<VectorData>(&mut res, "vector", &[(true, value_size, "elements")]);
             let procedure = new_builtin_type::<ClosureData>(&mut res, "procedure", &[
                 (false, value_size, "code"),
                 (false, value_size, "clovers")
@@ -263,8 +255,7 @@ impl State {
             ];
             res.object_types.named.typ.fields_mut().copy_from_slice(&type_fields);
 
-            res.object_types.named.field_descriptor.name =
-                res.get_symbol("<field-descriptor>").unwrap();
+            res.object_types.named.field_descriptor.name = res.get_symbol("<field-descriptor>").unwrap();
             let mutable_symbol = res.get_symbol("mutable").unwrap();
             let size_symbol = res.get_symbol("size").unwrap();
             let field_descriptor_fields = [
@@ -272,22 +263,12 @@ impl State {
                 FieldDescriptor::new_in(&mut res, false, value_size, size_symbol).unwrap(),
                 FieldDescriptor::new_in(&mut res, false, value_size, name_symbol).unwrap()
             ];
-            res.object_types
-                .named
-                .field_descriptor
-                .fields_mut()
-                .copy_from_slice(&field_descriptor_fields);
+            res.object_types.named.field_descriptor.fields_mut().copy_from_slice(&field_descriptor_fields);
 
             res.object_types.named.symbol.name = res.get_symbol("<symbol>").unwrap();
             let hash_symbol = res.get_symbol("hash").unwrap();
             let symbol_fields = [
-                FieldDescriptor::new_in(
-                    &mut res,
-                    false,
-                    (size_of::<u64>() as u16).into(),
-                    hash_symbol
-                )
-                .unwrap(),
+                FieldDescriptor::new_in(&mut res, false, (size_of::<u64>() as u16).into(), hash_symbol).unwrap(),
                 FieldDescriptor::new_in(&mut res, false, byte_size.into(), name_symbol).unwrap()
             ];
             res.object_types.named.symbol.fields_mut().copy_from_slice(&symbol_fields);
@@ -302,8 +283,7 @@ impl State {
                 if tag != Tag::ORef {
                     let name = res.get_symbol(&format!("{}", tag)).unwrap();
                     // TODO: Make these not total lies:
-                    let typ =
-                        Type::new_in(&mut res, true, false, name, None, 0.into(), &[]).unwrap();
+                    let typ = Type::new_in(&mut res, true, false, name, None, 0.into(), &[]).unwrap();
                     (*typ.header_mut()).header = Header::from_hash(tag as usize);
                     res.immediate_types[tag as usize] = typ.into();
                     res.env.insert(&mut res, name, typ.into()).unwrap();
@@ -365,9 +345,7 @@ impl State {
 
     pub fn dup(&mut self) { self.push(self.peek().unwrap()) }
 
-    pub fn get(&self, i: usize) -> Option<Value> {
-        self.stack.len().checked_sub(1 + i).map(|i| self.stack[i])
-    }
+    pub fn get(&self, i: usize) -> Option<Value> { self.stack.len().checked_sub(1 + i).map(|i| self.stack[i]) }
 
     pub fn put(&mut self, i: usize, v: Value) {
         let i = self.stack.len().checked_sub(1 + i).unwrap();
@@ -391,9 +369,7 @@ impl State {
             .map(|v| unsafe { transmute::<Value, HeapValue<T>>(v) })
     }
 
-    pub fn alloc_flex<T: DynamicType<IsFlex = True>>(
-        &mut self, flex_count: Fixnum
-    ) -> Option<HeapValue<T>> {
+    pub fn alloc_flex<T: DynamicType<IsFlex = True>>(&mut self, flex_count: Fixnum) -> Option<HeapValue<T>> {
         self.heap
             .alloc(
                 Object::new(T::reify_via(self)),
@@ -409,8 +385,8 @@ impl State {
             })
     }
 
-    pub unsafe fn push_string(&mut self, s: &str) {
-        let v = with_gc_retry! { self () { PgsString::new(s) } };
+    unsafe fn push_string(&mut self, s: &str) {
+        let v = PgsString::new(s);
         self.push(v)
     }
 
@@ -453,13 +429,11 @@ impl State {
     }
 
     pub unsafe fn push_syntax(&mut self, loc: Loc) -> Result<(), RuntimeError> {
-        let mut datum = self.pop().unwrap().unwrap();
+        let datum = self.pop().unwrap().unwrap();
         let line = loc.pos.line.try_into()?;
         let column = loc.pos.column.try_into()?;
-        let mut source = loc.source;
-        let syntax = with_gc_retry! { self (datum, source) {
-            Syntax::new(datum, Value::FALSE, source, line, column)
-        }};
+        let source = loc.source;
+        let syntax = Syntax::new(datum, Value::FALSE, source, line, column);
         self.push(syntax);
         Ok(())
     }
@@ -540,9 +514,7 @@ impl State {
 
     pub fn set_env(&mut self, env: Bindings) { self.env = env }
 
-    pub unsafe fn push_scope(&mut self) {
-        self.env = with_gc_retry! { self () { Bindings::new(Some(self.env)) } };
-    }
+    pub unsafe fn push_scope(&mut self) { self.env = with_gc_retry! { self () { Bindings::new(Some(self.env)) } }; }
 
     pub fn lookup(&mut self) -> Result<(), RuntimeError> {
         let name = unsafe { Symbol::unchecked_downcast(self.pop().unwrap().unwrap()) }; // checked before call

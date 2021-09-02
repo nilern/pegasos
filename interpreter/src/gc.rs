@@ -54,8 +54,7 @@ impl<O: HeapObject> Drop for Semispace<O> {
         unsafe {
             alloc::dealloc(
                 self.start,
-                Layout::from_size_align(self.end as usize - self.start as usize, Self::ALIGN)
-                    .unwrap()
+                Layout::from_size_align(self.end as usize - self.start as usize, Self::ALIGN).unwrap()
             );
         }
     }
@@ -220,13 +219,9 @@ mod tests {
 
         const LAPSED: Self::Ref = Ref(ptr::null_mut());
 
-        fn is_alignment_hole(mem: *const Self) -> bool {
-            Hdr::is_alignment_hole(unsafe { &(*mem).header })
-        }
+        fn is_alignment_hole(mem: *const Self) -> bool { Hdr::is_alignment_hole(unsafe { &(*mem).header }) }
 
-        fn forward(&mut self, oref: *const u8) {
-            *self = Self { header: unsafe { Hdr::forwarding(oref) } };
-        }
+        fn forward(&mut self, oref: *const u8) { *self = Self { header: unsafe { Hdr::forwarding(oref) } }; }
         fn forwarded(&self) -> Option<Self::Ref> { self.header.forwarded() }
 
         fn size(&self) -> usize { self.header.size() }
@@ -243,9 +238,7 @@ mod tests {
         type Object = Obj;
 
         unsafe fn from_ptr(ptr: *mut u8) -> Self { Ref(ptr) }
-        fn as_mut_ptr(self) -> Option<*mut Self::Object> {
-            Some(unsafe { (self.0 as *mut Self::Object).offset(-1) })
-        }
+        fn as_mut_ptr(self) -> Option<*mut Self::Object> { Some(unsafe { (self.0 as *mut Self::Object).offset(-1) }) }
     }
 
     impl Display for Ref {

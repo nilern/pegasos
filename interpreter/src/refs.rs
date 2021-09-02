@@ -35,9 +35,7 @@ pub trait DynamicType: Sized {
 pub fn type_of(v: Value) -> Type { state::with(|state| state.type_of(v)) }
 
 impl<T: DynamicType> DynamicDowncast for HeapValue<T> {
-    unsafe fn unchecked_downcast(value: Value) -> Self {
-        HeapValue { value, _phantom: PhantomData }
-    }
+    unsafe fn unchecked_downcast(value: Value) -> Self { HeapValue { value, _phantom: PhantomData } }
 }
 
 impl<T: DynamicType> TryFrom<Value> for HeapValue<T> {
@@ -143,11 +141,8 @@ impl Value {
         match self.tag() {
             Tag::Fixnum => UnpackedValue::Fixnum(self.0 as isize >> Self::SHIFT),
             Tag::ORef => UnpackedValue::ORef(HeapValue { value: self, _phantom: PhantomData }),
-            Tag::Flonum =>
-                UnpackedValue::Flonum(unsafe { transmute::<usize, fsize>(self.0 & !Self::MASK) }),
-            Tag::Char => UnpackedValue::Char(unsafe {
-                char::from_u32_unchecked((self.0 >> Self::SHIFT) as u32)
-            }),
+            Tag::Flonum => UnpackedValue::Flonum(unsafe { transmute::<usize, fsize>(self.0 & !Self::MASK) }),
+            Tag::Char => UnpackedValue::Char(unsafe { char::from_u32_unchecked((self.0 >> Self::SHIFT) as u32) }),
             Tag::Bool => UnpackedValue::Bool((self.0 >> Self::SHIFT) != 0),
             Tag::Nil => UnpackedValue::Nil,
             Tag::Unspecified => UnpackedValue::Unspecified,
@@ -251,9 +246,7 @@ impl TryFrom<Value> for char {
         } else {
             Err(RuntimeError::Type {
                 expected: unsafe {
-                    Type::unchecked_downcast(state::with(|state| {
-                        state.immediate_types()[Tag::Char as usize]
-                    }))
+                    Type::unchecked_downcast(state::with(|state| state.immediate_types()[Tag::Char as usize]))
                 },
                 value
             })
@@ -262,9 +255,7 @@ impl TryFrom<Value> for char {
 }
 
 impl DynamicDowncast for char {
-    unsafe fn unchecked_downcast(v: Value) -> Self {
-        char::from_u32_unchecked((v.0 >> Value::SHIFT) as u32)
-    }
+    unsafe fn unchecked_downcast(v: Value) -> Self { char::from_u32_unchecked((v.0 >> Value::SHIFT) as u32) }
 }
 
 impl From<bool> for Value {
@@ -280,9 +271,7 @@ impl TryFrom<Value> for bool {
         } else {
             Err(RuntimeError::Type {
                 expected: unsafe {
-                    Type::unchecked_downcast(state::with(|state| {
-                        state.immediate_types()[Tag::Bool as usize]
-                    }))
+                    Type::unchecked_downcast(state::with(|state| state.immediate_types()[Tag::Bool as usize]))
                 },
                 value
             })
@@ -359,9 +348,7 @@ impl TryFrom<Value> for Fixnum {
         } else {
             Err(RuntimeError::Type {
                 expected: unsafe {
-                    Type::unchecked_downcast(state::with(|state| {
-                        state.immediate_types()[Tag::Fixnum as usize]
-                    }))
+                    Type::unchecked_downcast(state::with(|state| state.immediate_types()[Tag::Fixnum as usize]))
                 },
                 value
             })
@@ -654,20 +641,14 @@ impl<T: ?Sized> HeapValue<T> {
     pub fn slots<'a>(&'a self) -> &'a [Value] {
         unsafe {
             let obj = &mut *self.header_mut();
-            slice::from_raw_parts(
-                obj.data() as *mut Value,
-                if obj.is_bytes() { 0 } else { obj.len() }
-            )
+            slice::from_raw_parts(obj.data() as *mut Value, if obj.is_bytes() { 0 } else { obj.len() })
         }
     }
 
     pub fn slots_mut<'a>(&'a mut self) -> &'a mut [Value] {
         unsafe {
             let obj = &mut *self.header_mut();
-            slice::from_raw_parts_mut(
-                obj.data() as *mut Value,
-                if obj.is_bytes() { 0 } else { obj.len() }
-            )
+            slice::from_raw_parts_mut(obj.data() as *mut Value, if obj.is_bytes() { 0 } else { obj.len() })
         }
     }
 
@@ -729,9 +710,7 @@ impl TryFrom<Value> for HeapValue<()> {
 }
 
 impl DynamicDowncast for HeapValue<()> {
-    unsafe fn unchecked_downcast(value: Value) -> Self {
-        HeapValue { value, _phantom: PhantomData }
-    }
+    unsafe fn unchecked_downcast(value: Value) -> Self { HeapValue { value, _phantom: PhantomData } }
 }
 
 impl<T: DynamicType<IsFlex = False> + Debug> Debug for HeapValue<T> {
@@ -740,6 +719,47 @@ impl<T: DynamicType<IsFlex = False> + Debug> Debug for HeapValue<T> {
 
 impl Display for HeapValue<()> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result { self.unpack().fmt(f) }
+}
+
+// ---
+
+pub struct Handle<T> {
+    shadow_index: usize,
+    _phantom: PhantomData<*mut T>
+}
+
+impl<T> From<HeapValue<T>> for Handle<T> {
+    fn from(value: HeapValue<T>) -> Self {
+        state::with_mut(|state| {
+            let shadow_index = state.shadow_stack.len();
+            state.shadow_stack.push(value.into());
+            Handle { shadow_index, _phantom: PhantomData }
+        })
+    }
+}
+
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        state::with_mut(|state| {
+            let shadow_index = state.shadow_stack.len();
+            state.shadow_stack.push(state.shadow_stack[self.shadow_index]);
+            Handle { shadow_index, _phantom: PhantomData }
+        })
+    }
+}
+
+impl<T> Drop for Handle<T> {
+    fn drop(&mut self) { state::with_mut(|state| state.shadow_stack.pop()); }
+}
+
+impl<T: DynamicType<IsFlex = False>> Deref for Handle<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        state::with(|state| unsafe {
+            &*(HeapValue::<T>::unchecked_downcast(state.shadow_stack[self.shadow_index]).data() as *const T)
+        })
+    }
 }
 
 // ---
